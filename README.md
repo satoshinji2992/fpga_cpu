@@ -192,9 +192,7 @@ Q quit
 漏接小球结束后，FPGA 会通过串口打印进阶层次性能指标：
 
 ```text
-freq=50MHz
-CPI=1.00 ideal pipeline
-throughput=50 MIPS ideal
+freq=50MHz CPI=1 T=50MIPS
 ```
 
 ## 说明
@@ -206,7 +204,7 @@ throughput=50 MIPS ideal
 当前进阶版顶层包含：
 
 - `riscv_pipeline_core.v`: IF/ID/EX/MEM/WB 五级流水线，包含 EX 阶段转发和分支/跳转冲刷。
-- `icache_direct_mapped.v`: 8 行直接映射 I-Cache，带 hit/miss 计数器，可用于性能分析。
+- `icache_direct_mapped.v`: 8 行直接映射 I-Cache。为适配 XC6SLX9 资源限制，当前版本移除了未使用的 hit/miss 硬件计数器。
 - `serial_shell.v`: UART I/O shell，可查看 CPU 内存结果并运行轻量 Ping-Pong 演示。
 
 流水线相对单周期版本的可讲指标：
