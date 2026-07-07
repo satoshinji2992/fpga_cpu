@@ -9,6 +9,9 @@
 - [x] 能够运行简单测试程序
 - [x] 硬件下载验证与答辩演示
 - [x] 集成UART串口交互Shell
+- [x] 引入五级流水线机制
+- [x] 引入直接映射I-Cache
+- [x] 支持UART贪吃蛇小型测试程序
 
 ## ✅ 已实现的指令（RV32I子集）
 
@@ -106,6 +109,14 @@ assign rs2_data = (rs2 == 5'b0) ? 32'b0 : regfile[rs2];
 - [x] 集成核心板LED/KEY
 - [x] 集成UART收发模块
 - [x] 提供PC端Python串口Shell
+- [x] 提供UART贪吃蛇演示程序
+
+### 优先级5: 进阶结构
+- [x] 新增五级流水线CPU核心
+- [x] 新增EX阶段数据转发
+- [x] 新增分支/跳转冲刷
+- [x] 新增直接映射I-Cache与hit/miss计数
+- [x] 新增流水线CPU仿真testbench
 
 ## 📊 预期资源使用
 

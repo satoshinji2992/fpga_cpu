@@ -42,6 +42,10 @@ module top (
     wire [31:0] instr_addr;
     wire [31:0] instr_data;
     wire        instr_valid;
+    wire [31:0] instr_rom_addr;
+    wire [31:0] instr_rom_data;
+    wire [31:0] icache_hits;
+    wire [31:0] icache_misses;
 
     // 数据存储器信号
     wire [31:0] data_addr;
@@ -54,9 +58,9 @@ module top (
     wire        halt;
 
     //----------------------------------------------
-    // CPU实例
+    // 五级流水线CPU实例
     //----------------------------------------------
-    riscv_core u_cpu (
+    riscv_pipeline_core u_cpu (
         .clk        (clk_slow),
         .rst_n      (rst_n),
         .instr_addr (instr_addr),
@@ -72,10 +76,23 @@ module top (
     );
 
     //----------------------------------------------
-    // 指令存储器 (异步读取)
+    // 直接映射I-Cache + 指令存储器 (异步读取)
     //----------------------------------------------
-    assign instr_data  = instr_mem[instr_addr[7:2]];
-    assign instr_valid = 1'b1;
+    assign instr_rom_data = instr_mem[instr_rom_addr[7:2]];
+
+    icache_direct_mapped #(
+        .LINES(8)
+    ) u_icache (
+        .clk        (clk_slow),
+        .rst_n      (rst_n),
+        .cpu_addr   (instr_addr),
+        .mem_addr   (instr_rom_addr),
+        .mem_data   (instr_rom_data),
+        .cpu_data   (instr_data),
+        .cpu_valid  (instr_valid),
+        .hit_count  (icache_hits),
+        .miss_count (icache_misses)
+    );
 
     //----------------------------------------------
     // 数据存储器

@@ -5,9 +5,12 @@
 项目实现了一个可综合、可仿真、可上板运行的简单处理器系统：
 
 - RV32I 子集单周期 CPU
+- RV32I 子集五级流水线 CPU
+- 直接映射指令 Cache
 - 片内指令 ROM 和数据 RAM
 - 核心板 LED/KEY 验证接口
 - UART 串口交互 shell
+- UART 贪吃蛇小型测试程序
 - Python PC 端串口工具
 
 ## 目录结构
@@ -16,6 +19,8 @@
 .
 ├── src/
 │   ├── cpu_core.v        # RISC-V CPU核心
+│   ├── riscv_pipeline_core.v # 五级流水线CPU核心
+│   ├── icache_direct_mapped.v # 直接映射I-Cache
 │   ├── top.v             # FPGA顶层: CPU + 内存 + LED/KEY + UART shell
 │   ├── top.ucf           # TEC-PLUS核心板引脚约束
 │   ├── uart_rx.v         # UART接收
@@ -48,6 +53,8 @@
 
 需要安装 Icarus Verilog。
 
+单周期 CPU 回归：
+
 ```bash
 iverilog -o cpu_sim src/cpu_core.v src/tb_cpu_core.v
 vvp cpu_sim
@@ -64,6 +71,19 @@ PASS
 
 生成的 `cpu_core.vcd` 可用 GTKWave 查看。
 
+流水线 CPU 回归：
+
+```bash
+iverilog -o pipe_sim src/riscv_pipeline_core.v src/tb_pipeline_core.v
+vvp pipe_sim
+```
+
+通过时会看到：
+
+```text
+PIPELINE PASS
+```
+
 ## ISE 上板
 
 1. 在 Windows / ISE 14.7 中打开 `xilinx.xise`
@@ -73,7 +93,7 @@ PASS
 5. 运行 `Generate Programming File`
 6. 用 iMPACT 下载生成的 `top.bit`
 
-当前顶层只使用 TEC-PLUS 核心板自带外设：
+当前顶层使用五级流水线 CPU 和直接映射 I-Cache，只使用 TEC-PLUS 核心板自带外设：
 
 ```text
 CLK    T8
@@ -133,6 +153,9 @@ s    status
 0    print Mem[0]
 1    print Mem[1]
 2    print Mem[2]
+g    show snake board
+u/d/l/r move snake
+n    reset snake
 q    quit Python client
 ```
 
@@ -149,6 +172,35 @@ cpu> 2
 mem2=0x00000002
 ```
 
+贪吃蛇演示：
+
+```bash
+python scripts/serial_shell.py -p COM5 --snake
+```
+
+键盘控制：
+
+```text
+W/A/S/D move
+N reset
+G redraw
+Q quit
+```
+
 ## 说明
 
 本项目的 LED 和串口输出不是固定组合逻辑直接生成的，而是来自 CPU 执行 RISC-V 机器指令后写入的数据 RAM。通过更换指令 ROM 内容，同一 CPU 核心可以执行不同程序。
+
+## 进阶层次说明
+
+当前进阶版顶层包含：
+
+- `riscv_pipeline_core.v`: IF/ID/EX/MEM/WB 五级流水线，包含 EX 阶段转发和分支/跳转冲刷。
+- `icache_direct_mapped.v`: 8 行直接映射 I-Cache，带 hit/miss 计数器，可用于性能分析。
+- `serial_shell.v`: UART I/O shell，可查看 CPU 内存结果并运行 8x8 贪吃蛇演示。
+
+流水线相对单周期版本的可讲指标：
+
+- 理想 CPI 接近 1。
+- 分支和跳转在 EX 阶段解析，会冲刷年轻指令，产生控制相关开销。
+- I-Cache 命中时直接返回缓存指令；首次访问或冲突时记录 miss 并填充缓存行。

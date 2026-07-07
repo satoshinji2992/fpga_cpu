@@ -143,7 +143,7 @@ module serial_shell #(
     reg       move_eat;
 
     reg [3:0] board_x;
-    reg [2:0] board_y;
+    reg [3:0] board_y;
 
     function [7:0] hex_char;
         input [3:0] nibble;
@@ -254,7 +254,7 @@ module serial_shell #(
     task render_board_after;
         begin
             board_x   <= 4'd0;
-            board_y   <= 3'd0;
+            board_y   <= 4'd0;
             after_msg <= AFTER_PROMPT;
             state     <= ST_SEND_BOARD;
         end
@@ -317,7 +317,7 @@ module serial_shell #(
                     start_message(MSG_SNAKE_EAT, AFTER_BOARD);
                 end else begin
                     board_x   <= 4'd0;
-                    board_y   <= 3'd0;
+                    board_y   <= 4'd0;
                     after_msg <= AFTER_PROMPT;
                     state     <= ST_SEND_BOARD;
                 end
@@ -337,7 +337,7 @@ module serial_shell #(
             hex_value      <= 32'd0;
             hex_index      <= 4'd0;
             board_x        <= 4'd0;
-            board_y        <= 3'd0;
+            board_y        <= 4'd0;
             tx_data        <= 8'd0;
             tx_start       <= 1'b0;
             reset_snake();
@@ -421,7 +421,7 @@ module serial_shell #(
 
                 ST_SEND_BOARD: begin
                     if (!tx_busy) begin
-                        if (board_y < 3'd8) begin
+                    if (board_y < 4'd8) begin
                             tx_data        <= board_char(board_x, board_y);
                             tx_start       <= 1'b1;
                             return_state   <= ST_SEND_BOARD;
@@ -430,7 +430,7 @@ module serial_shell #(
 
                             if (board_x == 4'd9) begin
                                 board_x <= 4'd0;
-                                board_y <= board_y + 3'd1;
+                                board_y <= board_y + 4'd1;
                             end else begin
                                 board_x <= board_x + 4'd1;
                             end
