@@ -1,99 +1,131 @@
 # FPGA RISC-V CPU
 
-基于 Xilinx Spartan-6 XC6SLX9-2FTG256 / TEC-PLUS 核心板的 RV32I 子集单周期 CPU 课程设计。
+面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RV32I 子集 CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY 验证接口和 UART 交互程序。
 
-项目实现了一个可综合、可仿真、可上板运行的简单处理器系统：
+## 当前实现
 
-- RV32I 子集单周期 CPU
-- RV32I 子集五级流水线 CPU
-- 直接映射指令 Cache
-- 片内指令 ROM 和数据 RAM
-- 核心板 LED/KEY 验证接口
-- UART 串口交互 shell
-- UART Ping-Pong 小型测试程序
-- Python PC 端串口工具
+### 基础层次
+
+- RV32I 子集单周期 CPU：`src/cpu_core.v`
+- 支持算术逻辑、移位比较、访存、跳转分支、立即数等基本指令
+- 仿真 testbench：`src/tb_cpu_core.v`
+- 可运行固化测试程序，仿真结果为 `PASS`
+
+### 进阶层次
+
+- 五级流水线 CPU：`src/riscv_pipeline_core.v`
+- 流水线阶段：IF / ID / EX / MEM / WB
+- EX 阶段数据转发
+- 分支/跳转冲刷流水线
+- 片上指令 ROM 和片上数据 RAM
+- 8 行直接映射 I-Cache：`src/icache_direct_mapped.v`
+- LED / KEY / UART 基本 I/O
+- FPGA 端串口 shell：`src/serial_shell.v`
+- Python 串口工具：`scripts/serial_shell.py`
+- UART Ping-Pong 小型交互程序
+
+### 未实现或部分实现
+
+- 未使用 SDRAM，当前只使用片上 ROM/RAM
+- 未实现异常、中断、CSR 和特权架构
+- 未实现完整 load-use 冒险暂停机制
+- 未实现分支预测
+- I-Cache 没有硬件 hit/miss 计数器，当前版本为节省资源已移除
+- `src/multiplier.v` 未接入 CPU 指令通路，因此不算支持乘法指令
+- 未实现除法、浮点、自定义 ISA 扩展和多方案 PPA 对比
 
 ## 目录结构
 
 ```text
-.
-├── src/
-│   ├── cpu_core.v        # RISC-V CPU核心
-│   ├── riscv_pipeline_core.v # 五级流水线CPU核心
-│   ├── icache_direct_mapped.v # 直接映射I-Cache
-│   ├── top.v             # FPGA顶层: CPU + 内存 + LED/KEY + UART shell
-│   ├── top.ucf           # TEC-PLUS核心板引脚约束
-│   ├── uart_rx.v         # UART接收
-│   ├── uart_tx.v         # UART发送
-│   ├── serial_shell.v    # FPGA端串口shell
-│   ├── tb_cpu_core.v     # CPU仿真testbench
-│   ├── alu.v
-│   ├── regfile.v
-│   └── multiplier.v
-├── scripts/
-│   └── serial_shell.py   # PC端串口交互工具
-├── doc/                  # 设计与学习文档
-├── asm/                  # RISC-V汇编示例
-├── reference/            # 课程题目和ISE辅助脚本
-├── xilinx.xise           # ISE 14.7工程
-└── TASK_STATUS.md
+src/
+  cpu_core.v              单周期 RV32I 子集 CPU
+  riscv_pipeline_core.v   五级流水线 CPU
+  icache_direct_mapped.v  直接映射 I-Cache
+  top.v                   FPGA 顶层
+  top.ucf                 TEC-PLUS 核心板引脚约束
+  uart_rx.v / uart_tx.v   UART 收发
+  serial_shell.v          FPGA 端串口 shell
+  tb_cpu_core.v           单周期 CPU 仿真
+  tb_pipeline_core.v      流水线 CPU 仿真
+
+scripts/
+  serial_shell.py         PC 端串口交互工具
+
+xilinx.xise              ISE 14.7 工程
 ```
 
-## 功能
+## 系统结构
 
-支持的 RV32I 指令类型包括：
+```text
+TEC-PLUS 50MHz 时钟 / RESET
+        |
+        v
+五级流水线 CPU
+        |
+        +-- I-Cache -- 片上指令 ROM
+        |
+        +-- 片上数据 RAM
+        |
+        +-- LED / KEY
+        |
+        +-- UART Shell -- Python PC 工具
+```
 
-- 算术逻辑: `ADD`, `SUB`, `ADDI`, `AND`, `OR`, `XOR`, `ANDI`, `ORI`, `XORI`
-- 移位比较: `SLL`, `SRL`, `SRA`, `SLT`, `SLTU`, `SLTI`, `SLTIU`
-- 访存: `LB`, `LH`, `LW`, `LBU`, `LHU`, `SB`, `SH`, `SW`
-- 跳转分支: `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`
-- 立即数: `LUI`, `AUIPC`
+当前 `top.v` 没有使用 SDRAM，也没有实例化 SDRAM 控制器。
 
-## 仿真
+## 支持的指令
 
-需要安装 Icarus Verilog。
+- 算术逻辑：`ADD`, `SUB`, `ADDI`, `AND`, `OR`, `XOR`, `ANDI`, `ORI`, `XORI`
+- 移位比较：`SLL`, `SRL`, `SRA`, `SLT`, `SLTU`, `SLTI`, `SLTIU`
+- 访存：`LB`, `LH`, `LW`, `LBU`, `LHU`, `SB`, `SH`, `SW`
+- 跳转分支：`BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`
+- 立即数：`LUI`, `AUIPC`
 
-单周期 CPU 回归：
+## 仿真验证
+
+单周期 CPU：
 
 ```bash
 iverilog -o cpu_sim src/cpu_core.v src/tb_cpu_core.v
 vvp cpu_sim
 ```
 
-通过时会看到：
+预期结果：
 
 ```text
-Mem[0] = 34801200 (expected 34801200)
-Mem[1] = 0000fffe (expected 0000fffe)
-Mem[2] = 2 (expected 2)
 PASS
 ```
 
-生成的 `cpu_core.vcd` 可用 GTKWave 查看。
-
-流水线 CPU 回归：
+流水线 CPU：
 
 ```bash
 iverilog -o pipe_sim src/riscv_pipeline_core.v src/tb_pipeline_core.v
 vvp pipe_sim
 ```
 
-通过时会看到：
+预期结果：
 
 ```text
 PIPELINE PASS
 ```
 
+顶层语法检查：
+
+```bash
+iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
+  src/uart_tx.v src/uart_rx.v src/serial_shell.v src/top.v
+```
+
 ## ISE 上板
 
 1. 在 Windows / ISE 14.7 中打开 `xilinx.xise`
-2. 确认顶层模块是 `top`
+2. 确认顶层模块为 `top`
 3. 运行 `Synthesize - XST`
 4. 运行 `Implement Design`
 5. 运行 `Generate Programming File`
-6. 用 iMPACT 下载生成的 `top.bit`
+6. 使用 iMPACT 下载 `top.bit`
 
-当前顶层使用五级流水线 CPU 和直接映射 I-Cache，只使用 TEC-PLUS 核心板自带外设：
+核心板引脚：
 
 ```text
 CLK    T8
@@ -110,32 +142,34 @@ RXD    D5
 TXD    D6
 ```
 
-## LED/KEY 验证
+## 上板现象
 
-FPGA 上电后 CPU 运行固化测试程序。测试通过时：
+FPGA 上电后，CPU 执行固化在 `top.v` 指令 ROM 中的测试程序。测试通过时：
 
 ```text
 4 个 LED 全亮 = PASS
 ```
 
-按键可查看关键结果：
+按键显示关键内存结果：
 
 ```text
-KEY1 -> 显示 Mem[0][31:28] = 3
-KEY2 -> 显示 Mem[0][23:20] = 8
-KEY3 -> 显示 Mem[1][3:0]   = E
-KEY4 -> 显示 Mem[2][3:0]   = 2
+KEY1 -> Mem[0][31:28] = 3
+KEY2 -> Mem[0][23:20] = 8
+KEY3 -> Mem[1][3:0]   = E
+KEY4 -> Mem[2][3:0]   = 2
 ```
 
-## 串口 Shell
+这些结果来自 CPU 执行 RISC-V 指令后写入的数据 RAM，不是固定组合逻辑直接生成。
 
-核心板 CP2102 USB 串口参数：
+## UART 交互
+
+串口参数：
 
 ```text
 115200 baud, 8N1
 ```
 
-PC 端工具：
+PC 端：
 
 ```bash
 python -m pip install pyserial
@@ -143,9 +177,7 @@ python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
 ```
 
-把 `COM5` 换成实际串口号。
-
-支持命令：
+常用命令：
 
 ```text
 h    help
@@ -160,55 +192,22 @@ n    reset Pong
 q    quit Python client
 ```
 
-预期输出：
-
-```text
-cpu> s
-PASS halt=1
-cpu> 0
-mem0=0x34801200
-cpu> 1
-mem1=0x0000FFFE
-cpu> 2
-mem2=0x00000002
-```
-
 Ping-Pong 演示：
 
 ```bash
 python scripts/serial_shell.py -p COM5 --pong
 ```
 
-键盘控制：
-
-```text
-A/D move paddle
-Space step
-N reset
-G redraw
-Q quit
-```
-
-漏接小球结束后，FPGA 会通过串口打印进阶层次性能指标：
+漏接小球后，FPGA 通过串口输出：
 
 ```text
 freq=50MHz CPI=1 T=50MIPS
 ```
 
-## 说明
+该性能值是基于 50MHz 时钟和理想流水线 CPI=1 的展示指标，不是硬件实时性能计数器统计值。
 
-本项目的 LED 和串口输出不是固定组合逻辑直接生成的，而是来自 CPU 执行 RISC-V 机器指令后写入的数据 RAM。通过更换指令 ROM 内容，同一 CPU 核心可以执行不同程序。
+## 报告表述
 
-## 进阶层次说明
+可以概括为：
 
-当前进阶版顶层包含：
-
-- `riscv_pipeline_core.v`: IF/ID/EX/MEM/WB 五级流水线，包含 EX 阶段转发和分支/跳转冲刷。
-- `icache_direct_mapped.v`: 8 行直接映射 I-Cache。为适配 XC6SLX9 资源限制，当前版本移除了未使用的 hit/miss 硬件计数器。
-- `serial_shell.v`: UART I/O shell，可查看 CPU 内存结果并运行轻量 Ping-Pong 演示。
-
-流水线相对单周期版本的可讲指标：
-
-- 理想 CPI 接近 1。
-- 分支和跳转在 EX 阶段解析，会冲刷年轻指令，产生控制相关开销。
-- I-Cache 命中时直接返回缓存指令；首次访问或冲突时记录 miss 并填充缓存行。
+> 本设计完成了 RV32I 子集 CPU 的基础实现，并在此基础上扩展为包含片上内存、基本 I/O、五级流水线和直接映射 I-Cache 的小型可运行计算机系统。系统可通过仿真、LED/KEY 和 UART shell 进行验证。拓展层次中的分支预测、完整 Cache 统计、浮点/乘除法扩展和 PPA 多方案对比尚未深入实现。
