@@ -1,0 +1,67 @@
+# Xilinx ISE generated files
+_ngo/
+_xmsgs/
+iseconfig/
+isim/
+xst/
+xlnx_auto_*/
+
+*.bgn
+*.bit
+*.bld
+*.cmd_log
+*.drc
+*.gise
+*.lso
+*.map
+*.mrp
+*.ncd
+*.ngc
+*.ngd
+*.ngm
+*.ngr
+*.pad
+*.par
+*.pcf
+*.prj
+*.ptwx
+*.stx
+*.syr
+*.twr
+*.twx
+*.unroutes
+*.ut
+*.xpi
+*.xst
+*.xrpt
+*.xwbt
+
+# ISim and waveform outputs
+*.exe
+*.wdb
+*.vcd
+fuse.log
+fuse.xmsgs
+fuseRelaunch.cmd
+isim.cmd
+isim.log
+xilinxsim.ini
+
+# Xilinx reports and telemetry
+*_summary.html
+*_summary.xml
+*_usage.xml
+*_envsettings.html
+*_pad.csv
+*_pad.txt
+usage_statistics_webtalk.html
+par_usage_statistics.html
+webtalk.log
+webtalk_pn.xml
+
+# Local screenshots / temporary notes
+screenshot*.png
+
+# Python local files
+__pycache__/
+*.pyc

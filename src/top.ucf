@@ -1,0 +1,39 @@
+#==============================================
+# TEC-PLUS 核心板独立运行引脚约束
+# FPGA: Spartan-6 XC6SLX9-2FTG256
+# Source: 03.TEC-PLUS核心板FPGA引脚定义(更新).pdf
+#==============================================
+
+#----------------------------------------------
+# 核心板时钟与复位
+#----------------------------------------------
+NET "clk"       LOC = T8  | IOSTANDARD = LVCMOS33;  # CLK, 50MHz
+NET "rst_n"     LOC = L3  | IOSTANDARD = LVCMOS33;  # RESET, low active
+
+#----------------------------------------------
+# 核心板按键, 常态约2.75V, 按下约0.15V
+#----------------------------------------------
+NET "key1"      LOC = T13 | IOSTANDARD = LVCMOS33;  # KEY1
+NET "key2"      LOC = R12 | IOSTANDARD = LVCMOS33;  # KEY2
+NET "key3"      LOC = T12 | IOSTANDARD = LVCMOS33;  # KEY3
+NET "key4"      LOC = P11 | IOSTANDARD = LVCMOS33;  # KEY4
+
+#----------------------------------------------
+# 核心板USB转串口 CP2102
+#----------------------------------------------
+NET "uart_rx"   LOC = D5  | IOSTANDARD = LVCMOS33;  # RXD
+NET "uart_tx"   LOC = D6  | IOSTANDARD = LVCMOS33;  # TXD
+
+#----------------------------------------------
+# 核心板4个独立LED
+#----------------------------------------------
+NET "led1"      LOC = M14 | IOSTANDARD = LVCMOS33;  # LED1
+NET "led2"      LOC = M13 | IOSTANDARD = LVCMOS33;  # LED2
+NET "led3"      LOC = L13 | IOSTANDARD = LVCMOS33;  # LED3
+NET "led4"      LOC = L12 | IOSTANDARD = LVCMOS33;  # LED4
+
+#----------------------------------------------
+# 时序约束
+#----------------------------------------------
+NET "clk" TNM_NET = "clk_grp";
+TIMESPEC TS_clk = PERIOD "clk_grp" 20 ns HIGH 50%;
