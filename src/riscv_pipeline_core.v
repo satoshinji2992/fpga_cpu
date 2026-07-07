@@ -45,6 +45,15 @@ module riscv_pipeline_core #(
     reg [31:0] regs [0:31];
     integer i;
 
+    // Power-up init (NOT a clocked reset): this becomes the distributed-RAM
+    // INIT attribute, so XST still infers DRAM while keeping the array
+    // deterministic in sim and at FPGA power-on. A clocked for-reset here
+    // would instead force XST to build 1024 FFs + wide read muxes.
+    initial begin
+        for (i = 0; i < 32; i = i + 1)
+            regs[i] = 32'b0;
+    end
+
     // IF/ID
     reg        ifid_valid;
     reg [31:0] ifid_pc;
@@ -98,6 +107,14 @@ module riscv_pipeline_core #(
     wire [4:0] id_rs1    = ifid_instr[19:15];
     wire [4:0] id_rs2    = ifid_instr[24:20];
     wire [6:0] id_funct7 = ifid_instr[31:25];
+
+    // Register-file reads are async (continuous assign) so XST infers a clean
+    // dual-port distributed RAM. The array itself is intentionally not reset
+    // (Spartan-6 SLICEM DRAM has no reset), so x0 is forced to 0 here at the
+    // read port instead. The mux sits after the DRAM read, so inference is
+    // unaffected; regs[0] is also never written (write port gates rd != 0).
+    wire [31:0] rf_rs1_data = (id_rs1 == 5'd0) ? 32'b0 : regs[id_rs1];
+    wire [31:0] rf_rs2_data = (id_rs2 == 5'd0) ? 32'b0 : regs[id_rs2];
 
     wire [31:0] imm_i = {{20{ifid_instr[31]}}, ifid_instr[31:20]};
     wire [31:0] imm_s = {{20{ifid_instr[31]}}, ifid_instr[31:25], ifid_instr[11:7]};
@@ -251,8 +268,12 @@ module riscv_pipeline_core #(
             idex_valid <= 1'b0;
             exmem_valid <= 1'b0;
             memwb_valid <= 1'b0;
-            for (i = 0; i < 32; i = i + 1)
-                regs[i] <= 32'b0;
+            // Register file is intentionally NOT reset here. Spartan-6
+            // distributed RAM (SLICEM) has no per-bit reset, so resetting the
+            // array makes XST build 1024 FFs + wide read muxes instead of
+            // inferring DRAM. The self-test writes every register before
+            // reading it, and x0 is forced to 0 at the read port, so no reset
+            // is needed.
         end else begin
             if (memwb_valid && memwb_reg_write && (memwb_rd != 5'd0))
                 regs[memwb_rd] <= memwb_result;
@@ -295,8 +316,8 @@ module riscv_pipeline_core #(
                 idex_rs2       <= id_rs2;
                 idex_rd        <= id_rd;
                 idex_funct3    <= id_funct3;
-                idex_rs1_data  <= (id_rs1 == 5'd0) ? 32'b0 : regs[id_rs1];
-                idex_rs2_data  <= (id_rs2 == 5'd0) ? 32'b0 : regs[id_rs2];
+                idex_rs1_data  <= rf_rs1_data;
+                idex_rs2_data  <= rf_rs2_data;
                 idex_imm       <= id_imm;
                 idex_alu_ctrl  <= id_alu_ctrl;
                 idex_use_imm   <= id_is_alu_imm || id_is_load || id_is_store || id_is_lui || id_is_auipc || id_is_jalr;

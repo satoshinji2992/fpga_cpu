@@ -4,7 +4,8 @@
 // This is a look-through cache for the on-chip instruction ROM:
 // on a hit it returns the cached line, on a miss it returns the ROM
 // data in the same cycle and fills the line on the next clock edge.
-// The hit/miss counters are exposed for performance discussion.
+// (Hit/miss counters were removed: they were unused in the top-level
+// and the two 32-bit updaters cost ~100 LUT each.)
 //==================================================
 module icache_direct_mapped #(
     parameter LINES = 8
@@ -15,9 +16,7 @@ module icache_direct_mapped #(
     output wire [31:0] mem_addr,
     input  wire [31:0] mem_data,
     output wire [31:0] cpu_data,
-    output wire        cpu_valid,
-    output reg  [31:0] hit_count,
-    output reg  [31:0] miss_count
+    output wire        cpu_valid
 );
 
     localparam INDEX_BITS = 3;
@@ -47,17 +46,10 @@ module icache_direct_mapped #(
                 tags[i]  <= {30-INDEX_BITS{1'b0}};
                 data[i]  <= 32'b0;
             end
-            hit_count  <= 32'd0;
-            miss_count <= 32'd0;
-        end else begin
-            if (hit) begin
-                hit_count <= hit_count + 32'd1;
-            end else begin
-                valid[index] <= 1'b1;
-                tags[index]  <= tag;
-                data[index]  <= mem_data;
-                miss_count   <= miss_count + 32'd1;
-            end
+        end else if (!hit) begin
+            valid[index] <= 1'b1;
+            tags[index]  <= tag;
+            data[index]  <= mem_data;
         end
     end
 

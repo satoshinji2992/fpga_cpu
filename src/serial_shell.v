@@ -77,11 +77,23 @@ module serial_shell #(
     reg [2:0] paddle_x;      // left edge, width 3
     reg       pong_over;
 
-    reg [2:0] next_x;
-    reg [2:0] next_y;
-    reg       next_dx;
-    reg       next_dy;
-    reg       miss;
+    // Pong "next ball" values are computed as combinational wires so the clocked
+    // block below only commits them. This replaces the former step_pong task:
+    // XST 14.7 mis-handles tasks (signed task ports, task-calls-task), and a
+    // blocking-assigned scratch reg inside a clocked block would be inferred as
+    // a flip-flop, so we avoid both.
+    wire rx_left  = (rx_data == "a") || (rx_data == "A") || (rx_data == "l") || (rx_data == "L");
+    wire rx_right = (rx_data == "d") || (rx_data == "D") || (rx_data == "r") || (rx_data == "R");
+    wire dx_bounce_l = (!ball_dx && ball_x == 3'd0);
+    wire dx_bounce_r = (ball_dx  && ball_x == 3'd7);
+    wire dy_bounce_t = (!ball_dy && ball_y == 3'd0);
+    wire paddle_hit  = (ball_dy  && ball_y == 3'd4) &&
+                       (ball_x >= paddle_x) && (ball_x <= paddle_x + 3'd2);
+    wire paddle_miss = (ball_dy  && ball_y == 3'd4) && !paddle_hit;
+    wire       step_dx = dx_bounce_l ? 1'b1 : (dx_bounce_r ? 1'b0 : ball_dx);
+    wire       step_dy = dy_bounce_t ? 1'b1 : (paddle_hit  ? 1'b0 : ball_dy);
+    wire [2:0] step_bx = step_dx ? (ball_x + 3'd1) : (ball_x - 3'd1);
+    wire [2:0] step_by = step_dy ? (ball_y + 3'd1) : (ball_y - 3'd1);
 
     function [7:0] hex_char;
         input [3:0] nibble;
@@ -116,21 +128,71 @@ module serial_shell #(
         end
     endfunction
 
-    function [7:0] metric_char;
-        input [5:0] p;
-        begin
-            metric_char = 8'h20;
-            case (p)
-                0: metric_char="f"; 1: metric_char="r"; 2: metric_char="e"; 3: metric_char="q";
-                4: metric_char="="; 5: metric_char="5"; 6: metric_char="0"; 7: metric_char="M";
-                8: metric_char="H"; 9: metric_char="z"; 10: metric_char=" "; 11: metric_char="C";
-                12: metric_char="P"; 13: metric_char="I"; 14: metric_char="="; 15: metric_char="1";
-                16: metric_char=" "; 17: metric_char="T"; 18: metric_char="="; 19: metric_char="5";
-                20: metric_char="0"; 21: metric_char="M"; 22: metric_char="I"; 23: metric_char="P";
-                24: metric_char=8'h0d; 25: metric_char=8'h0a;
-            endcase
-        end
-    endfunction
+    // Fixed response text lives in initial-initialized byte ROMs so XST infers
+    // distributed ROM (free BRAM/distributed-RAM) instead of building a giant
+    // comparator tree for the old case-in-function. Only the runtime-dependent
+    // responses (STATUS/MEM/PONG) stay as inline logic in response_char below.
+    reg [7:0] banner_rom  [0:33];
+    reg [7:0] help_rom    [0:46];
+    reg [7:0] reset_rom   [0:11];
+    reg [7:0] over_rom    [0:36];
+    reg [7:0] metrics_rom [0:25];
+    reg [7:0] bad_rom     [0:6];
+    reg [7:0] prompt_rom  [0:4];
+
+    initial begin
+        // RESP_BANNER: "\r\nRV32I pipe+icache shell\r\ncpu>  "
+        banner_rom[0]=8'h0d; banner_rom[1]=8'h0a; banner_rom[2]="R"; banner_rom[3]="V";
+        banner_rom[4]="3";   banner_rom[5]="2";   banner_rom[6]="I"; banner_rom[7]=" ";
+        banner_rom[8]="p";   banner_rom[9]="i";   banner_rom[10]="p"; banner_rom[11]="e";
+        banner_rom[12]="+";  banner_rom[13]="i";  banner_rom[14]="c"; banner_rom[15]="a";
+        banner_rom[16]="c";  banner_rom[17]="h";  banner_rom[18]="e"; banner_rom[19]=" ";
+        banner_rom[20]="s";  banner_rom[21]="h";  banner_rom[22]="e"; banner_rom[23]="l";
+        banner_rom[24]="l";  banner_rom[25]=8'h0d;banner_rom[26]=8'h0a;banner_rom[27]="c";
+        banner_rom[28]="p";  banner_rom[29]="u";  banner_rom[30]=">"; banner_rom[31]=" ";
+        banner_rom[32]=" ";  banner_rom[33]=" ";
+        // RESP_HELP: "h s 0 1 2 g a/d/x n p; q quits host\r\ncpu>      "
+        help_rom[0]="h";  help_rom[1]=" ";  help_rom[2]="s";  help_rom[3]=" ";
+        help_rom[4]="0";  help_rom[5]=" ";  help_rom[6]="1";  help_rom[7]=" ";
+        help_rom[8]="2";  help_rom[9]=" ";  help_rom[10]="g"; help_rom[11]=" ";
+        help_rom[12]="a"; help_rom[13]="/"; help_rom[14]="d"; help_rom[15]="/";
+        help_rom[16]="x"; help_rom[17]=" "; help_rom[18]="n"; help_rom[19]=" ";
+        help_rom[20]="p"; help_rom[21]=";"; help_rom[22]=" "; help_rom[23]="q";
+        help_rom[24]=" "; help_rom[25]="q"; help_rom[26]="u"; help_rom[27]="i";
+        help_rom[28]="t"; help_rom[29]="s"; help_rom[30]=" "; help_rom[31]="h";
+        help_rom[32]="o"; help_rom[33]="s"; help_rom[34]="t"; help_rom[35]=8'h0d;
+        help_rom[36]=8'h0a;help_rom[37]="c";help_rom[38]="p"; help_rom[39]="u";
+        help_rom[40]=">"; help_rom[41]=" "; help_rom[42]=" "; help_rom[43]=" ";
+        help_rom[44]=" "; help_rom[45]=" "; help_rom[46]=" ";
+        // RESP_RESET: "pong reset\r\n"
+        reset_rom[0]="p";  reset_rom[1]="o";  reset_rom[2]="n";  reset_rom[3]="g";
+        reset_rom[4]=" ";  reset_rom[5]="r";  reset_rom[6]="e";  reset_rom[7]="s";
+        reset_rom[8]="e";  reset_rom[9]="t";  reset_rom[10]=8'h0d;reset_rom[11]=8'h0a;
+        // RESP_BAD: "?\r\ncpu>"
+        bad_rom[0]="?"; bad_rom[1]=8'h0d; bad_rom[2]=8'h0a; bad_rom[3]="c";
+        bad_rom[4]="p"; bad_rom[5]="u";   bad_rom[6]=">";
+        // RESP_PROMPT: "cpu> "
+        prompt_rom[0]="c"; prompt_rom[1]="p"; prompt_rom[2]="u"; prompt_rom[3]=">"; prompt_rom[4]=" ";
+        // RESP_OVER: "pong over\r\n" + "freq=50MHz CPI=1 T=50MIPS\r" + "\n"
+        over_rom[0]="p";  over_rom[1]="o";  over_rom[2]="n";  over_rom[3]="g";
+        over_rom[4]=" ";  over_rom[5]="o";  over_rom[6]="v";  over_rom[7]="e";
+        over_rom[8]="r";  over_rom[9]=8'h0d;over_rom[10]=8'h0a;
+        over_rom[11]="f"; over_rom[12]="r"; over_rom[13]="e"; over_rom[14]="q";
+        over_rom[15]="="; over_rom[16]="5"; over_rom[17]="0"; over_rom[18]="M";
+        over_rom[19]="H"; over_rom[20]="z"; over_rom[21]=" "; over_rom[22]="C";
+        over_rom[23]="P"; over_rom[24]="I"; over_rom[25]="="; over_rom[26]="1";
+        over_rom[27]=" "; over_rom[28]="T"; over_rom[29]="="; over_rom[30]="5";
+        over_rom[31]="0"; over_rom[32]="M"; over_rom[33]="I"; over_rom[34]="P";
+        over_rom[35]=8'h0d;over_rom[36]=8'h0a;
+        // RESP_METRICS: "freq=50MHz CPI=1 T=50MIPS\r\n"
+        metrics_rom[0]="f";  metrics_rom[1]="r";  metrics_rom[2]="e";  metrics_rom[3]="q";
+        metrics_rom[4]="=";  metrics_rom[5]="5";  metrics_rom[6]="0";  metrics_rom[7]="M";
+        metrics_rom[8]="H";  metrics_rom[9]="z";  metrics_rom[10]=" "; metrics_rom[11]="C";
+        metrics_rom[12]="P"; metrics_rom[13]="I"; metrics_rom[14]="="; metrics_rom[15]="1";
+        metrics_rom[16]=" "; metrics_rom[17]="T"; metrics_rom[18]="="; metrics_rom[19]="5";
+        metrics_rom[20]="0"; metrics_rom[21]="M"; metrics_rom[22]="I"; metrics_rom[23]="P";
+        metrics_rom[24]=8'h0d; metrics_rom[25]=8'h0a;
+    end
 
     function [7:0] response_char;
         input [3:0] r;
@@ -138,33 +200,13 @@ module serial_shell #(
         begin
             response_char = 8'h20;
             case (r)
-                RESP_BANNER: begin
-                    case (p)
-                        0: response_char=8'h0d; 1: response_char=8'h0a; 2: response_char="R"; 3: response_char="V";
-                        4: response_char="3"; 5: response_char="2"; 6: response_char="I"; 7: response_char=" ";
-                        8: response_char="p"; 9: response_char="i"; 10: response_char="p"; 11: response_char="e";
-                        12: response_char="+"; 13: response_char="i"; 14: response_char="c"; 15: response_char="a";
-                        16: response_char="c"; 17: response_char="h"; 18: response_char="e"; 19: response_char=" ";
-                        20: response_char="s"; 21: response_char="h"; 22: response_char="e"; 23: response_char="l";
-                        24: response_char="l"; 25: response_char=8'h0d; 26: response_char=8'h0a; 27: response_char="c";
-                        28: response_char="p"; 29: response_char="u"; 30: response_char=">"; 31: response_char=" ";
-                    endcase
-                end
-                RESP_HELP: begin
-                    case (p)
-                        0: response_char="h"; 1: response_char=" "; 2: response_char="s"; 3: response_char=" ";
-                        4: response_char="0"; 5: response_char=" "; 6: response_char="1"; 7: response_char=" ";
-                        8: response_char="2"; 9: response_char=" "; 10: response_char="g"; 11: response_char=" ";
-                        12: response_char="a"; 13: response_char="/"; 14: response_char="d"; 15: response_char="/";
-                        16: response_char="x"; 17: response_char=" "; 18: response_char="n"; 19: response_char=" ";
-                        20: response_char="p"; 21: response_char=";"; 22: response_char=" "; 23: response_char="q";
-                        24: response_char=" "; 25: response_char="q"; 26: response_char="u"; 27: response_char="i";
-                        28: response_char="t"; 29: response_char="s"; 30: response_char=" "; 31: response_char="h";
-                        32: response_char="o"; 33: response_char="s"; 34: response_char="t"; 35: response_char=8'h0d;
-                        36: response_char=8'h0a; 37: response_char="c"; 38: response_char="p"; 39: response_char="u";
-                        40: response_char=">"; 41: response_char=" ";
-                    endcase
-                end
+                RESP_BANNER:  response_char = banner_rom[p];
+                RESP_HELP:    response_char = help_rom[p];
+                RESP_RESET:   response_char = reset_rom[p];
+                RESP_OVER:    response_char = over_rom[p];
+                RESP_METRICS: response_char = metrics_rom[p];
+                RESP_BAD:     response_char = bad_rom[p];
+                RESP_PROMPT:  response_char = prompt_rom[p];
                 RESP_STATUS: begin
                     if (test_pass) begin
                         case (p)
@@ -172,6 +214,7 @@ module serial_shell #(
                             4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
                             8: response_char="t"; 9: response_char="="; 10: response_char="1"; 11: response_char=8'h0d;
                             12: response_char=8'h0a; 13: response_char=" ";
+                            default: response_char=8'h20;
                         endcase
                     end else begin
                         case (p)
@@ -179,6 +222,7 @@ module serial_shell #(
                             4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
                             8: response_char="t"; 9: response_char="="; 10: response_char=halt ? "1" : "0"; 11: response_char=8'h0d;
                             12: response_char=8'h0a; 13: response_char=" ";
+                            default: response_char=8'h20;
                         endcase
                     end
                 end
@@ -196,6 +240,7 @@ module serial_shell #(
                         14: response_char=hex_char(selected_mem[3:0]);
                         15: response_char=8'h0d;
                         16: response_char=8'h0a;
+                        default: response_char=8'h20;
                     endcase
                 end
                 RESP_PONG: begin
@@ -204,130 +249,13 @@ module serial_shell #(
                         4: response_char=digit(ball_y); 5: response_char=" "; 6: response_char="P"; 7: response_char=digit(paddle_x);
                         8: response_char=" "; 9: response_char="O"; 10: response_char=pong_over ? "1" : "0";
                         11: response_char=8'h0d; 12: response_char=8'h0a;
+                        default: response_char=8'h20;
                     endcase
                 end
-                RESP_RESET: begin
-                    case (p)
-                        0: response_char="p"; 1: response_char="o"; 2: response_char="n"; 3: response_char="g";
-                        4: response_char=" "; 5: response_char="r"; 6: response_char="e"; 7: response_char="s";
-                        8: response_char="e"; 9: response_char="t"; 10: response_char=8'h0d; 11: response_char=8'h0a;
-                    endcase
-                end
-                RESP_OVER: begin
-                    case (p)
-                        0: response_char="p"; 1: response_char="o"; 2: response_char="n"; 3: response_char="g";
-                        4: response_char=" "; 5: response_char="o"; 6: response_char="v"; 7: response_char="e";
-                        8: response_char="r"; 9: response_char=8'h0d; 10: response_char=8'h0a;
-                        11: response_char=metric_char(0);  12: response_char=metric_char(1);
-                        13: response_char=metric_char(2);  14: response_char=metric_char(3);
-                        15: response_char=metric_char(4);  16: response_char=metric_char(5);
-                        17: response_char=metric_char(6);  18: response_char=metric_char(7);
-                        19: response_char=metric_char(8);  20: response_char=metric_char(9);
-                        21: response_char=metric_char(10); 22: response_char=metric_char(11);
-                        23: response_char=metric_char(12); 24: response_char=metric_char(13);
-                        25: response_char=metric_char(14); 26: response_char=metric_char(15);
-                        27: response_char=metric_char(16); 28: response_char=metric_char(17);
-                        29: response_char=metric_char(18); 30: response_char=metric_char(19);
-                        31: response_char=metric_char(20); 32: response_char=metric_char(21);
-                        33: response_char=metric_char(22); 34: response_char=metric_char(23);
-                        35: response_char=metric_char(24); 36: response_char=8'h0a;
-                    endcase
-                end
-                RESP_METRICS: begin
-                    if (p < 6'd26)
-                        response_char = metric_char(p);
-                    else
-                        response_char = 8'h0a;
-                end
-                RESP_BAD: begin
-                    case (p)
-                        0: response_char="?"; 1: response_char=8'h0d; 2: response_char=8'h0a; 3: response_char="c";
-                        4: response_char="p"; 5: response_char="u"; 6: response_char=">";
-                    endcase
-                end
-                RESP_PROMPT: begin
-                    case (p)
-                        0: response_char="c"; 1: response_char="p"; 2: response_char="u"; 3: response_char=">";
-                        4: response_char=" ";
-                    endcase
-                end
+                default: response_char = 8'h20;
             endcase
         end
     endfunction
-
-    task reset_pong;
-        begin
-            ball_x <= 3'd4;
-            ball_y <= 3'd2;
-            ball_dx <= 1'b1;
-            ball_dy <= 1'b1;
-            paddle_x <= 3'd2;
-            pong_over <= 1'b0;
-        end
-    endtask
-
-    task start_resp;
-        input [3:0] r;
-        begin
-            resp <= r;
-            pos <= 6'd0;
-            state <= ST_SEND;
-        end
-    endtask
-
-    task step_pong;
-        input signed [1:0] paddle_delta;
-        begin
-            if (paddle_delta < 0 && paddle_x != 3'd0)
-                paddle_x <= paddle_x - 3'd1;
-            else if (paddle_delta > 0 && paddle_x < 3'd5)
-                paddle_x <= paddle_x + 3'd1;
-
-            next_x = ball_x;
-            next_y = ball_y;
-            next_dx = ball_dx;
-            next_dy = ball_dy;
-            miss = 1'b0;
-
-            if (!pong_over) begin
-                if (!ball_dx && ball_x == 3'd0)
-                    next_dx = 1'b1;
-                else if (ball_dx && ball_x == 3'd7)
-                    next_dx = 1'b0;
-
-                if (!ball_dy && ball_y == 3'd0)
-                    next_dy = 1'b1;
-
-                if (ball_dy && ball_y == 3'd4) begin
-                    if ((ball_x >= paddle_x) && (ball_x <= paddle_x + 3'd2))
-                        next_dy = 1'b0;
-                    else
-                        miss = 1'b1;
-                end
-
-                if (miss) begin
-                    pong_over <= 1'b1;
-                    start_resp(RESP_OVER);
-                end else begin
-                    if (next_dx)
-                        ball_x <= ball_x + 3'd1;
-                    else
-                        ball_x <= ball_x - 3'd1;
-
-                    if (next_dy)
-                        ball_y <= ball_y + 3'd1;
-                    else
-                        ball_y <= ball_y - 3'd1;
-
-                    ball_dx <= next_dx;
-                    ball_dy <= next_dy;
-                    start_resp(RESP_PONG);
-                end
-            end else begin
-                start_resp(RESP_OVER);
-            end
-        end
-    endtask
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -340,28 +268,58 @@ module serial_shell #(
             mem_id <= 2'd0;
             tx_data <= 8'd0;
             tx_start <= 1'b0;
-            reset_pong();
+            // reset_pong, inlined
+            ball_x <= 3'd4;
+            ball_y <= 3'd2;
+            ball_dx <= 1'b1;
+            ball_dy <= 1'b1;
+            paddle_x <= 3'd2;
+            pong_over <= 1'b0;
         end else begin
             tx_start <= 1'b0;
             case (state)
                 ST_IDLE: begin
                     if (!boot_sent) begin
                         boot_sent <= 1'b1;
-                        start_resp(RESP_BANNER);
+                        resp <= RESP_BANNER; pos <= 6'd0; state <= ST_SEND;
                     end else if (rx_valid) begin
                         case (rx_data)
-                            "h", "H": start_resp(RESP_HELP);
-                            "s", "S": start_resp(RESP_STATUS);
-                            "0": begin selected_mem <= mem0; mem_id <= 2'd0; start_resp(RESP_MEM); end
-                            "1": begin selected_mem <= mem1; mem_id <= 2'd1; start_resp(RESP_MEM); end
-                            "2": begin selected_mem <= mem2; mem_id <= 2'd2; start_resp(RESP_MEM); end
-                            "g", "G": start_resp(RESP_PONG);
-                            "n", "N": begin reset_pong(); start_resp(RESP_RESET); end
-                            "p", "P": start_resp(RESP_METRICS);
-                            "a", "A", "l", "L": step_pong(-1);
-                            "d", "D", "r", "R": step_pong(1);
-                            "x", "X", 8'h20: step_pong(0);
-                            default: start_resp(RESP_BAD);
+                            "h", "H": begin resp <= RESP_HELP;   pos <= 6'd0; state <= ST_SEND; end
+                            "s", "S": begin resp <= RESP_STATUS; pos <= 6'd0; state <= ST_SEND; end
+                            "0": begin selected_mem <= mem0; mem_id <= 2'd0; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
+                            "1": begin selected_mem <= mem1; mem_id <= 2'd1; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
+                            "2": begin selected_mem <= mem2; mem_id <= 2'd2; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
+                            "g", "G": begin resp <= RESP_PONG; pos <= 6'd0; state <= ST_SEND; end
+                            "n", "N": begin
+                                // reset_pong, inlined
+                                ball_x <= 3'd4; ball_y <= 3'd2; ball_dx <= 1'b1;
+                                ball_dy <= 1'b1; paddle_x <= 3'd2; pong_over <= 1'b0;
+                                resp <= RESP_RESET; pos <= 6'd0; state <= ST_SEND;
+                            end
+                            "p", "P": begin resp <= RESP_METRICS; pos <= 6'd0; state <= ST_SEND; end
+                            "a", "A", "l", "L", "d", "D", "r", "R", "x", "X", 8'h20: begin
+                                // step_pong, inlined; paddle direction comes from rx_data
+                                if (rx_left && paddle_x != 3'd0)
+                                    paddle_x <= paddle_x - 3'd1;
+                                else if (rx_right && paddle_x < 3'd5)
+                                    paddle_x <= paddle_x + 3'd1;
+
+                                if (!pong_over) begin
+                                    if (paddle_miss) begin
+                                        pong_over <= 1'b1;
+                                        resp <= RESP_OVER; pos <= 6'd0; state <= ST_SEND;
+                                    end else begin
+                                        ball_x <= step_bx;
+                                        ball_y <= step_by;
+                                        ball_dx <= step_dx;
+                                        ball_dy <= step_dy;
+                                        resp <= RESP_PONG; pos <= 6'd0; state <= ST_SEND;
+                                    end
+                                end else begin
+                                    resp <= RESP_OVER; pos <= 6'd0; state <= ST_SEND;
+                                end
+                            end
+                            default: begin resp <= RESP_BAD; pos <= 6'd0; state <= ST_SEND; end
                         endcase
                     end
                 end

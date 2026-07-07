@@ -40,8 +40,6 @@ module top (
     wire        instr_valid;
     wire [31:0] instr_rom_addr;
     wire [31:0] instr_rom_data;
-    wire [31:0] icache_hits;
-    wire [31:0] icache_misses;
 
     // 数据存储器信号
     wire [31:0] data_addr;
@@ -85,34 +83,37 @@ module top (
         .mem_addr   (instr_rom_addr),
         .mem_data   (instr_rom_data),
         .cpu_data   (instr_data),
-        .cpu_valid  (instr_valid),
-        .hit_count  (icache_hits),
-        .miss_count (icache_misses)
+        .cpu_valid  (instr_valid)
     );
 
     //----------------------------------------------
-    // 数据存储器
+    // 数据存储器 (按字节拆成 4 个字节宽阵列)
+    // 这是 XST 能稳定推断为分布式 RAM 的字节写模板, 避免
+    // 把带字节使能的整字回退成触发器 + 宽多路选择器。
     //----------------------------------------------
-    reg [31:0] data_mem [0:63];
+    reg [7:0] data_mem_b0 [0:63];
+    reg [7:0] data_mem_b1 [0:63];
+    reg [7:0] data_mem_b2 [0:63];
+    reg [7:0] data_mem_b3 [0:63];
+    wire [5:0] data_idx = data_addr[7:2];
     wire [31:0] mem0;
     wire [31:0] mem1;
     wire [31:0] mem2;
     wire        test_pass;
 
     always @(posedge clk) begin
-        if (data_we) begin
-            if (data_be[0]) data_mem[data_addr[7:2]][7:0]   <= data_wdata[7:0];
-            if (data_be[1]) data_mem[data_addr[7:2]][15:8]  <= data_wdata[15:8];
-            if (data_be[2]) data_mem[data_addr[7:2]][23:16] <= data_wdata[23:16];
-            if (data_be[3]) data_mem[data_addr[7:2]][31:24] <= data_wdata[31:24];
-        end
+        if (data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
+        if (data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
+        if (data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
+        if (data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
     end
 
-    assign data_rdata = data_mem[data_addr[7:2]];
+    assign data_rdata = {data_mem_b3[data_idx], data_mem_b2[data_idx],
+                         data_mem_b1[data_idx], data_mem_b0[data_idx]};
     assign data_ready = 1'b1;
-    assign mem0 = data_mem[0];
-    assign mem1 = data_mem[1];
-    assign mem2 = data_mem[2];
+    assign mem0 = {data_mem_b3[6'd0], data_mem_b2[6'd0], data_mem_b1[6'd0], data_mem_b0[6'd0]};
+    assign mem1 = {data_mem_b3[6'd1], data_mem_b2[6'd1], data_mem_b1[6'd1], data_mem_b0[6'd1]};
+    assign mem2 = {data_mem_b3[6'd2], data_mem_b2[6'd2], data_mem_b1[6'd2], data_mem_b0[6'd2]};
     assign test_pass = halt &&
                        (mem0 == 32'h3480_1200) &&
                        (mem1 == 32'h0000_FFFE) &&
@@ -146,8 +147,11 @@ module top (
     integer j;
     initial begin
         for (j = 0; j < 64; j = j + 1) begin
-            instr_mem[j] = 32'h00000013; // NOP
-            data_mem[j] = 32'h0;
+            instr_mem[j]   = 32'h00000013; // NOP
+            data_mem_b0[j] = 8'h0;
+            data_mem_b1[j] = 8'h0;
+            data_mem_b2[j] = 8'h0;
+            data_mem_b3[j] = 8'h0;
         end
 
         instr_mem[0]  = 32'hFFF00093; // ADDI x1,  x0, -1
