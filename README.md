@@ -10,7 +10,7 @@
 - 片内指令 ROM 和数据 RAM
 - 核心板 LED/KEY 验证接口
 - UART 串口交互 shell
-- UART 贪吃蛇小型测试程序
+- UART Ping-Pong 小型测试程序
 - Python PC 端串口工具
 
 ## 目录结构
@@ -153,9 +153,10 @@ s    status
 0    print Mem[0]
 1    print Mem[1]
 2    print Mem[2]
-g    show snake board
-u/d/l/r move snake
-n    reset snake
+g    show Pong state
+a/d  move paddle and step
+x    step ball
+n    reset Pong
 q    quit Python client
 ```
 
@@ -172,22 +173,23 @@ cpu> 2
 mem2=0x00000002
 ```
 
-贪吃蛇演示：
+Ping-Pong 演示：
 
 ```bash
-python scripts/serial_shell.py -p COM5 --snake
+python scripts/serial_shell.py -p COM5 --pong
 ```
 
 键盘控制：
 
 ```text
-W/A/S/D move
+A/D move paddle
+Space step
 N reset
 G redraw
 Q quit
 ```
 
-撞墙结束后，FPGA 会通过串口打印进阶层次性能指标：
+漏接小球结束后，FPGA 会通过串口打印进阶层次性能指标：
 
 ```text
 freq=50MHz
@@ -205,7 +207,7 @@ throughput=50 MIPS ideal
 
 - `riscv_pipeline_core.v`: IF/ID/EX/MEM/WB 五级流水线，包含 EX 阶段转发和分支/跳转冲刷。
 - `icache_direct_mapped.v`: 8 行直接映射 I-Cache，带 hit/miss 计数器，可用于性能分析。
-- `serial_shell.v`: UART I/O shell，可查看 CPU 内存结果并运行 8x8 贪吃蛇演示。
+- `serial_shell.v`: UART I/O shell，可查看 CPU 内存结果并运行轻量 Ping-Pong 演示。
 
 流水线相对单周期版本的可讲指标：
 

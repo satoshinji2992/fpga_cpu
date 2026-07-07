@@ -11,7 +11,7 @@
 - [x] 集成UART串口交互Shell
 - [x] 引入五级流水线机制
 - [x] 引入直接映射I-Cache
-- [x] 支持UART贪吃蛇小型测试程序
+- [x] 支持UART Ping-Pong小型测试程序
 
 ## ✅ 已实现的指令（RV32I子集）
 
@@ -109,7 +109,7 @@ assign rs2_data = (rs2 == 5'b0) ? 32'b0 : regfile[rs2];
 - [x] 集成核心板LED/KEY
 - [x] 集成UART收发模块
 - [x] 提供PC端Python串口Shell
-- [x] 提供UART贪吃蛇演示程序
+- [x] 提供UART Ping-Pong演示程序
 
 ### 优先级5: 进阶结构
 - [x] 新增五级流水线CPU核心

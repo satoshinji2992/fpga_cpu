@@ -1,15 +1,20 @@
 //==================================================
-// UART shell for board-level CPU/system debug.
+// Lightweight UART shell for the FPGA CPU system.
+//
+// The FPGA keeps CPU status and a tiny Pong game state machine. The PC
+// Python client renders the board, which keeps this module small enough
+// for XC6SLX9.
 //
 // Commands:
 //   h - help
 //   s - CPU status
-//   0 - print Mem[0]
-//   1 - print Mem[1]
-//   2 - print Mem[2]
-//   g - show snake board
-//   u/d/l/r - move snake
-//   n - reset snake
+//   0/1/2 - print Mem[0..2]
+//   g - get Pong state
+//   a/l - move paddle left and step
+//   d/r - move paddle right and step
+//   x - step
+//   n - reset Pong
+//   p - performance metrics
 //==================================================
 module serial_shell #(
     parameter CLK_FREQ = 50000000,
@@ -34,120 +39,49 @@ module serial_shell #(
     reg        tx_start;
     wire       tx_busy;
 
-    uart_rx #(
-        .CLKS_PER_BIT(CLKS_PER_BIT)
-    ) u_uart_rx (
-        .clk   (clk),
-        .rst_n (rst_n),
-        .rx    (rx),
-        .data  (rx_data),
-        .valid (rx_valid)
+    uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_rx (
+        .clk(clk), .rst_n(rst_n), .rx(rx), .data(rx_data), .valid(rx_valid)
     );
 
-    uart_tx #(
-        .CLKS_PER_BIT(CLKS_PER_BIT)
-    ) u_uart_tx (
-        .clk   (clk),
-        .rst_n (rst_n),
-        .start (tx_start),
-        .data  (tx_data),
-        .tx    (tx),
-        .busy  (tx_busy)
+    uart_tx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_tx (
+        .clk(clk), .rst_n(rst_n), .start(tx_start), .data(tx_data), .tx(tx), .busy(tx_busy)
     );
 
-    localparam MSG_BANNER      = 4'd0;
-    localparam MSG_HELP        = 4'd1;
-    localparam MSG_PROMPT      = 4'd2;
-    localparam MSG_PASS        = 4'd3;
-    localparam MSG_FAIL        = 4'd4;
-    localparam MSG_MEM0        = 4'd5;
-    localparam MSG_MEM1        = 4'd6;
-    localparam MSG_MEM2        = 4'd7;
-    localparam MSG_BAD         = 4'd8;
-    localparam MSG_CRLF        = 4'd9;
-    localparam MSG_SNAKE_HEAD  = 4'd10;
-    localparam MSG_SNAKE_EAT   = 4'd11;
-    localparam MSG_SNAKE_OVER  = 4'd12;
-    localparam MSG_SNAKE_RESET = 4'd13;
-    localparam MSG_METRICS     = 4'd14;
+    localparam RESP_BANNER  = 4'd0;
+    localparam RESP_HELP    = 4'd1;
+    localparam RESP_STATUS  = 4'd2;
+    localparam RESP_MEM     = 4'd3;
+    localparam RESP_PONG    = 4'd4;
+    localparam RESP_RESET   = 4'd5;
+    localparam RESP_OVER    = 4'd6;
+    localparam RESP_METRICS = 4'd7;
+    localparam RESP_BAD     = 4'd8;
+    localparam RESP_PROMPT  = 4'd9;
 
-    localparam BANNER_LEN      = 81;
-    localparam HELP_LEN        = 61;
-    localparam PROMPT_LEN      = 5;
-    localparam PASS_LEN        = 13;
-    localparam FAIL_LEN        = 13;
-    localparam MEM_LEN         = 7;
-    localparam BAD_LEN         = 15;
-    localparam CRLF_LEN        = 7;
-    localparam SNAKE_HEAD_LEN  = 35;
-    localparam SNAKE_EAT_LEN   = 18;
-    localparam SNAKE_OVER_LEN  = 28;
-    localparam SNAKE_RESET_LEN = 15;
-    localparam METRICS_LEN     = 63;
+    localparam ST_IDLE = 2'd0;
+    localparam ST_SEND = 2'd1;
+    localparam ST_WAIT = 2'd2;
 
-    localparam [8*BANNER_LEN-1:0]      BANNER_TEXT      = "\r\nRISC-V CPU shell\r\nh help s status 0/1/2 mem g snake u/d/l/r move n reset\r\ncpu> ";
-    localparam [8*HELP_LEN-1:0]        HELP_TEXT        = "h:help s:status 0/1/2:mem g:snake u/d/l/r:move n:reset\r\ncpu> ";
-    localparam [8*PROMPT_LEN-1:0]      PROMPT_TEXT      = "cpu> ";
-    localparam [8*PASS_LEN-1:0]        PASS_TEXT        = "PASS halt=1\r\n";
-    localparam [8*FAIL_LEN-1:0]        FAIL_TEXT        = "FAIL halt=?\r\n";
-    localparam [8*MEM_LEN-1:0]         MEM0_TEXT        = "mem0=0x";
-    localparam [8*MEM_LEN-1:0]         MEM1_TEXT        = "mem1=0x";
-    localparam [8*MEM_LEN-1:0]         MEM2_TEXT        = "mem2=0x";
-    localparam [8*BAD_LEN-1:0]         BAD_TEXT         = "?\r\nh for help\r\n";
-    localparam [8*CRLF_LEN-1:0]        CRLF_TEXT        = "\r\ncpu> ";
-    localparam [8*SNAKE_HEAD_LEN-1:0]  SNAKE_HEAD_TEXT  = "\r\nSNAKE 8x8: u/d/l/r move n reset\r\n";
-    localparam [8*SNAKE_EAT_LEN-1:0]   SNAKE_EAT_TEXT   = "\r\nsnake ate food\r\n";
-    localparam [8*SNAKE_OVER_LEN-1:0]  SNAKE_OVER_TEXT  = "\r\nsnake game over, n reset\r\n";
-    localparam [8*SNAKE_RESET_LEN-1:0] SNAKE_RESET_TEXT = "\r\nsnake reset\r\n";
-    localparam [8*METRICS_LEN-1:0]     METRICS_TEXT     = "freq=50MHz\r\nCPI=1.00 ideal pipeline\r\nthroughput=50 MIPS ideal\r\n";
-
-    localparam ST_IDLE       = 3'd0;
-    localparam ST_SEND_MSG   = 3'd1;
-    localparam ST_SEND_HEX   = 3'd2;
-    localparam ST_SEND_BOARD = 3'd3;
-    localparam ST_WAIT_BYTE  = 3'd4;
-
-    localparam AFTER_NONE   = 3'd0;
-    localparam AFTER_HEX    = 3'd1;
-    localparam AFTER_PROMPT = 3'd2;
-    localparam AFTER_BOARD  = 3'd3;
-    localparam AFTER_METRICS = 3'd4;
-
-    localparam DIR_UP    = 2'd0;
-    localparam DIR_DOWN  = 2'd1;
-    localparam DIR_LEFT  = 2'd2;
-    localparam DIR_RIGHT = 2'd3;
-
-    reg [2:0]  state;
-    reg [2:0]  return_state;
+    reg [1:0]  state;
     reg        wait_seen_busy;
     reg        boot_sent;
-    reg [3:0]  active_msg;
-    reg [7:0]  msg_index;
-    reg [2:0]  after_msg;
-    reg [31:0] hex_value;
-    reg [3:0]  hex_index;
+    reg [3:0]  resp;
+    reg [5:0]  pos;
+    reg [31:0] selected_mem;
+    reg [1:0]  mem_id;
 
-    reg [2:0] snake_x0;
-    reg [2:0] snake_y0;
-    reg [2:0] snake_x1;
-    reg [2:0] snake_y1;
-    reg [2:0] snake_x2;
-    reg [2:0] snake_y2;
-    reg [2:0] snake_x3;
-    reg [2:0] snake_y3;
-    reg [2:0] food_x;
-    reg [2:0] food_y;
-    reg [1:0] snake_dir;
-    reg [2:0] snake_len;
-    reg       snake_over;
-    reg [2:0] move_x;
-    reg [2:0] move_y;
-    reg       move_wall;
-    reg       move_eat;
+    reg [2:0] ball_x;
+    reg [2:0] ball_y;
+    reg       ball_dx;       // 0:left, 1:right
+    reg       ball_dy;       // 0:up,   1:down
+    reg [2:0] paddle_x;      // left edge, width 3
+    reg       pong_over;
 
-    reg [3:0] board_x;
-    reg [3:0] board_y;
+    reg [2:0] next_x;
+    reg [2:0] next_y;
+    reg       next_dx;
+    reg       next_dy;
+    reg       miss;
 
     function [7:0] hex_char;
         input [3:0] nibble;
@@ -156,308 +90,300 @@ module serial_shell #(
         end
     endfunction
 
-    function [7:0] msg_len;
-        input [3:0] msg;
+    function [7:0] digit;
+        input [2:0] value;
         begin
-            case (msg)
-                MSG_BANNER:      msg_len = BANNER_LEN[7:0];
-                MSG_HELP:        msg_len = HELP_LEN[7:0];
-                MSG_PROMPT:      msg_len = PROMPT_LEN[7:0];
-                MSG_PASS:        msg_len = PASS_LEN[7:0];
-                MSG_FAIL:        msg_len = FAIL_LEN[7:0];
-                MSG_MEM0:        msg_len = MEM_LEN[7:0];
-                MSG_MEM1:        msg_len = MEM_LEN[7:0];
-                MSG_MEM2:        msg_len = MEM_LEN[7:0];
-                MSG_BAD:         msg_len = BAD_LEN[7:0];
-                MSG_CRLF:        msg_len = CRLF_LEN[7:0];
-                MSG_SNAKE_HEAD:  msg_len = SNAKE_HEAD_LEN[7:0];
-                MSG_SNAKE_EAT:   msg_len = SNAKE_EAT_LEN[7:0];
-                MSG_SNAKE_OVER:  msg_len = SNAKE_OVER_LEN[7:0];
-                MSG_SNAKE_RESET: msg_len = SNAKE_RESET_LEN[7:0];
-                MSG_METRICS:     msg_len = METRICS_LEN[7:0];
-                default:         msg_len = 8'd0;
+            digit = 8'h30 + {5'b0, value};
+        end
+    endfunction
+
+    function [5:0] resp_len;
+        input [3:0] r;
+        begin
+            case (r)
+                RESP_BANNER:  resp_len = 6'd34; // "\r\nRV32I pipe+icache shell\r\ncpu> "
+                RESP_HELP:    resp_len = 6'd47; // "h s 0 1 2 g a/d/x n p; q quits host\r\ncpu> "
+                RESP_STATUS:  resp_len = 6'd14; // "PASS halt=1\r\n" or "FAIL halt=0\r\n"
+                RESP_MEM:     resp_len = 6'd17; // "memX=0x12345678\r\n"
+                RESP_PONG:    resp_len = 6'd13; // "P Bxy Pp Oo\r\n"
+                RESP_RESET:   resp_len = 6'd12; // "pong reset\r\n"
+                RESP_OVER:    resp_len = 6'd37; // "pong over\r\nfreq=50MHz CPI=1 T=50MIPS\r\n"
+                RESP_METRICS: resp_len = 6'd26; // "freq=50MHz CPI=1 T=50MIPS\r\n"
+                RESP_BAD:     resp_len = 6'd7;  // "?\r\ncpu> "
+                RESP_PROMPT:  resp_len = 6'd5;  // "cpu> "
+                default:      resp_len = 6'd0;
             endcase
         end
     endfunction
 
-    function [7:0] msg_char;
-        input [3:0] msg;
-        input [7:0] idx;
+    function [7:0] metric_char;
+        input [5:0] p;
         begin
-            case (msg)
-                MSG_BANNER:      msg_char = BANNER_TEXT[(BANNER_LEN - 1 - idx) * 8 +: 8];
-                MSG_HELP:        msg_char = HELP_TEXT[(HELP_LEN - 1 - idx) * 8 +: 8];
-                MSG_PROMPT:      msg_char = PROMPT_TEXT[(PROMPT_LEN - 1 - idx) * 8 +: 8];
-                MSG_PASS:        msg_char = PASS_TEXT[(PASS_LEN - 1 - idx) * 8 +: 8];
-                MSG_FAIL:        msg_char = FAIL_TEXT[(FAIL_LEN - 1 - idx) * 8 +: 8];
-                MSG_MEM0:        msg_char = MEM0_TEXT[(MEM_LEN - 1 - idx) * 8 +: 8];
-                MSG_MEM1:        msg_char = MEM1_TEXT[(MEM_LEN - 1 - idx) * 8 +: 8];
-                MSG_MEM2:        msg_char = MEM2_TEXT[(MEM_LEN - 1 - idx) * 8 +: 8];
-                MSG_BAD:         msg_char = BAD_TEXT[(BAD_LEN - 1 - idx) * 8 +: 8];
-                MSG_CRLF:        msg_char = CRLF_TEXT[(CRLF_LEN - 1 - idx) * 8 +: 8];
-                MSG_SNAKE_HEAD:  msg_char = SNAKE_HEAD_TEXT[(SNAKE_HEAD_LEN - 1 - idx) * 8 +: 8];
-                MSG_SNAKE_EAT:   msg_char = SNAKE_EAT_TEXT[(SNAKE_EAT_LEN - 1 - idx) * 8 +: 8];
-                MSG_SNAKE_OVER:  msg_char = SNAKE_OVER_TEXT[(SNAKE_OVER_LEN - 1 - idx) * 8 +: 8];
-                MSG_SNAKE_RESET: msg_char = SNAKE_RESET_TEXT[(SNAKE_RESET_LEN - 1 - idx) * 8 +: 8];
-                MSG_METRICS:     msg_char = METRICS_TEXT[(METRICS_LEN - 1 - idx) * 8 +: 8];
-                default:         msg_char = 8'h20;
+            metric_char = 8'h20;
+            case (p)
+                0: metric_char="f"; 1: metric_char="r"; 2: metric_char="e"; 3: metric_char="q";
+                4: metric_char="="; 5: metric_char="5"; 6: metric_char="0"; 7: metric_char="M";
+                8: metric_char="H"; 9: metric_char="z"; 10: metric_char=" "; 11: metric_char="C";
+                12: metric_char="P"; 13: metric_char="I"; 14: metric_char="="; 15: metric_char="1";
+                16: metric_char=" "; 17: metric_char="T"; 18: metric_char="="; 19: metric_char="5";
+                20: metric_char="0"; 21: metric_char="M"; 22: metric_char="I"; 23: metric_char="P";
+                24: metric_char=8'h0d; 25: metric_char=8'h0a;
             endcase
         end
     endfunction
 
-    function [7:0] board_char;
-        input [3:0] x;
-        input [2:0] y;
+    function [7:0] response_char;
+        input [3:0] r;
+        input [5:0] p;
         begin
-            if (x == 4'd8)
-                board_char = 8'h0d;
-            else if (x == 4'd9)
-                board_char = 8'h0a;
-            else if ((x[2:0] == snake_x0) && (y == snake_y0))
-                board_char = 8'h4f; // O
-            else if ((x[2:0] == snake_x1) && (y == snake_y1))
-                board_char = 8'h6f; // o
-            else if ((x[2:0] == snake_x2) && (y == snake_y2))
-                board_char = 8'h6f; // o
-            else if ((snake_len > 3'd3) && (x[2:0] == snake_x3) && (y == snake_y3))
-                board_char = 8'h6f; // o
-            else if ((x[2:0] == food_x) && (y == food_y))
-                board_char = 8'h40; // @
-            else
-                board_char = 8'h2e; // .
+            response_char = 8'h20;
+            case (r)
+                RESP_BANNER: begin
+                    case (p)
+                        0: response_char=8'h0d; 1: response_char=8'h0a; 2: response_char="R"; 3: response_char="V";
+                        4: response_char="3"; 5: response_char="2"; 6: response_char="I"; 7: response_char=" ";
+                        8: response_char="p"; 9: response_char="i"; 10: response_char="p"; 11: response_char="e";
+                        12: response_char="+"; 13: response_char="i"; 14: response_char="c"; 15: response_char="a";
+                        16: response_char="c"; 17: response_char="h"; 18: response_char="e"; 19: response_char=" ";
+                        20: response_char="s"; 21: response_char="h"; 22: response_char="e"; 23: response_char="l";
+                        24: response_char="l"; 25: response_char=8'h0d; 26: response_char=8'h0a; 27: response_char="c";
+                        28: response_char="p"; 29: response_char="u"; 30: response_char=">"; 31: response_char=" ";
+                    endcase
+                end
+                RESP_HELP: begin
+                    case (p)
+                        0: response_char="h"; 1: response_char=" "; 2: response_char="s"; 3: response_char=" ";
+                        4: response_char="0"; 5: response_char=" "; 6: response_char="1"; 7: response_char=" ";
+                        8: response_char="2"; 9: response_char=" "; 10: response_char="g"; 11: response_char=" ";
+                        12: response_char="a"; 13: response_char="/"; 14: response_char="d"; 15: response_char="/";
+                        16: response_char="x"; 17: response_char=" "; 18: response_char="n"; 19: response_char=" ";
+                        20: response_char="p"; 21: response_char=";"; 22: response_char=" "; 23: response_char="q";
+                        24: response_char=" "; 25: response_char="q"; 26: response_char="u"; 27: response_char="i";
+                        28: response_char="t"; 29: response_char="s"; 30: response_char=" "; 31: response_char="h";
+                        32: response_char="o"; 33: response_char="s"; 34: response_char="t"; 35: response_char=8'h0d;
+                        36: response_char=8'h0a; 37: response_char="c"; 38: response_char="p"; 39: response_char="u";
+                        40: response_char=">"; 41: response_char=" ";
+                    endcase
+                end
+                RESP_STATUS: begin
+                    if (test_pass) begin
+                        case (p)
+                            0: response_char="P"; 1: response_char="A"; 2: response_char="S"; 3: response_char="S";
+                            4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
+                            8: response_char="t"; 9: response_char="="; 10: response_char="1"; 11: response_char=8'h0d;
+                            12: response_char=8'h0a; 13: response_char=" ";
+                        endcase
+                    end else begin
+                        case (p)
+                            0: response_char="F"; 1: response_char="A"; 2: response_char="I"; 3: response_char="L";
+                            4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
+                            8: response_char="t"; 9: response_char="="; 10: response_char=halt ? "1" : "0"; 11: response_char=8'h0d;
+                            12: response_char=8'h0a; 13: response_char=" ";
+                        endcase
+                    end
+                end
+                RESP_MEM: begin
+                    case (p)
+                        0: response_char="m"; 1: response_char="e"; 2: response_char="m"; 3: response_char=8'h30 + {6'b0, mem_id};
+                        4: response_char="="; 5: response_char="0"; 6: response_char="x";
+                        7: response_char=hex_char(selected_mem[31:28]);
+                        8: response_char=hex_char(selected_mem[27:24]);
+                        9: response_char=hex_char(selected_mem[23:20]);
+                        10: response_char=hex_char(selected_mem[19:16]);
+                        11: response_char=hex_char(selected_mem[15:12]);
+                        12: response_char=hex_char(selected_mem[11:8]);
+                        13: response_char=hex_char(selected_mem[7:4]);
+                        14: response_char=hex_char(selected_mem[3:0]);
+                        15: response_char=8'h0d;
+                        16: response_char=8'h0a;
+                    endcase
+                end
+                RESP_PONG: begin
+                    case (p)
+                        0: response_char="P"; 1: response_char=" "; 2: response_char="B"; 3: response_char=digit(ball_x);
+                        4: response_char=digit(ball_y); 5: response_char=" "; 6: response_char="P"; 7: response_char=digit(paddle_x);
+                        8: response_char=" "; 9: response_char="O"; 10: response_char=pong_over ? "1" : "0";
+                        11: response_char=8'h0d; 12: response_char=8'h0a;
+                    endcase
+                end
+                RESP_RESET: begin
+                    case (p)
+                        0: response_char="p"; 1: response_char="o"; 2: response_char="n"; 3: response_char="g";
+                        4: response_char=" "; 5: response_char="r"; 6: response_char="e"; 7: response_char="s";
+                        8: response_char="e"; 9: response_char="t"; 10: response_char=8'h0d; 11: response_char=8'h0a;
+                    endcase
+                end
+                RESP_OVER: begin
+                    case (p)
+                        0: response_char="p"; 1: response_char="o"; 2: response_char="n"; 3: response_char="g";
+                        4: response_char=" "; 5: response_char="o"; 6: response_char="v"; 7: response_char="e";
+                        8: response_char="r"; 9: response_char=8'h0d; 10: response_char=8'h0a;
+                        11: response_char=metric_char(0);  12: response_char=metric_char(1);
+                        13: response_char=metric_char(2);  14: response_char=metric_char(3);
+                        15: response_char=metric_char(4);  16: response_char=metric_char(5);
+                        17: response_char=metric_char(6);  18: response_char=metric_char(7);
+                        19: response_char=metric_char(8);  20: response_char=metric_char(9);
+                        21: response_char=metric_char(10); 22: response_char=metric_char(11);
+                        23: response_char=metric_char(12); 24: response_char=metric_char(13);
+                        25: response_char=metric_char(14); 26: response_char=metric_char(15);
+                        27: response_char=metric_char(16); 28: response_char=metric_char(17);
+                        29: response_char=metric_char(18); 30: response_char=metric_char(19);
+                        31: response_char=metric_char(20); 32: response_char=metric_char(21);
+                        33: response_char=metric_char(22); 34: response_char=metric_char(23);
+                        35: response_char=metric_char(24); 36: response_char=8'h0a;
+                    endcase
+                end
+                RESP_METRICS: begin
+                    if (p < 6'd26)
+                        response_char = metric_char(p);
+                    else
+                        response_char = 8'h0a;
+                end
+                RESP_BAD: begin
+                    case (p)
+                        0: response_char="?"; 1: response_char=8'h0d; 2: response_char=8'h0a; 3: response_char="c";
+                        4: response_char="p"; 5: response_char="u"; 6: response_char=">";
+                    endcase
+                end
+                RESP_PROMPT: begin
+                    case (p)
+                        0: response_char="c"; 1: response_char="p"; 2: response_char="u"; 3: response_char=">";
+                        4: response_char=" ";
+                    endcase
+                end
+            endcase
         end
     endfunction
 
-    task reset_snake;
+    task reset_pong;
         begin
-            snake_x0   <= 3'd4;
-            snake_y0   <= 3'd4;
-            snake_x1   <= 3'd3;
-            snake_y1   <= 3'd4;
-            snake_x2   <= 3'd2;
-            snake_y2   <= 3'd4;
-            snake_x3   <= 3'd1;
-            snake_y3   <= 3'd4;
-            food_x     <= 3'd6;
-            food_y     <= 3'd4;
-            snake_dir  <= DIR_RIGHT;
-            snake_len  <= 3'd3;
-            snake_over <= 1'b0;
+            ball_x <= 3'd4;
+            ball_y <= 3'd2;
+            ball_dx <= 1'b1;
+            ball_dy <= 1'b1;
+            paddle_x <= 3'd2;
+            pong_over <= 1'b0;
         end
     endtask
 
-    task start_message;
-        input [3:0] msg;
-        input [2:0] next_after;
+    task start_resp;
+        input [3:0] r;
         begin
-            active_msg <= msg;
-            msg_index  <= 8'd0;
-            after_msg  <= next_after;
-            state      <= ST_SEND_MSG;
+            resp <= r;
+            pos <= 6'd0;
+            state <= ST_SEND;
         end
     endtask
 
-    task render_board_after;
+    task step_pong;
+        input signed [1:0] paddle_delta;
         begin
-            board_x   <= 4'd0;
-            board_y   <= 4'd0;
-            after_msg <= AFTER_PROMPT;
-            state     <= ST_SEND_BOARD;
-        end
-    endtask
+            if (paddle_delta < 0 && paddle_x != 3'd0)
+                paddle_x <= paddle_x - 3'd1;
+            else if (paddle_delta > 0 && paddle_x < 3'd5)
+                paddle_x <= paddle_x + 3'd1;
 
-    task move_snake;
-        input [1:0] dir;
-        begin
-            move_x    = snake_x0;
-            move_y    = snake_y0;
-            move_wall = 1'b0;
+            next_x = ball_x;
+            next_y = ball_y;
+            next_dx = ball_dx;
+            next_dy = ball_dy;
+            miss = 1'b0;
 
-            case (dir)
-                DIR_UP: begin
-                    if (snake_y0 == 3'd0)
-                        move_wall = 1'b1;
-                    else
-                        move_y = snake_y0 - 3'd1;
-                end
-                DIR_DOWN: begin
-                    if (snake_y0 == 3'd7)
-                        move_wall = 1'b1;
-                    else
-                        move_y = snake_y0 + 3'd1;
-                end
-                DIR_LEFT: begin
-                    if (snake_x0 == 3'd0)
-                        move_wall = 1'b1;
-                    else
-                        move_x = snake_x0 - 3'd1;
-                end
-                DIR_RIGHT: begin
-                    if (snake_x0 == 3'd7)
-                        move_wall = 1'b1;
-                    else
-                        move_x = snake_x0 + 3'd1;
-                end
-            endcase
+            if (!pong_over) begin
+                if (!ball_dx && ball_x == 3'd0)
+                    next_dx = 1'b1;
+                else if (ball_dx && ball_x == 3'd7)
+                    next_dx = 1'b0;
 
-            move_eat = (move_x == food_x) && (move_y == food_y) && !move_wall;
+                if (!ball_dy && ball_y == 3'd0)
+                    next_dy = 1'b1;
 
-            if (snake_over || move_wall) begin
-                snake_over <= 1'b1;
-                start_message(MSG_SNAKE_OVER, AFTER_METRICS);
-            end else begin
-                snake_dir <= dir;
-                snake_x3  <= move_eat ? snake_x2 : snake_x2;
-                snake_y3  <= move_eat ? snake_y2 : snake_y2;
-                snake_x2  <= snake_x1;
-                snake_y2  <= snake_y1;
-                snake_x1  <= snake_x0;
-                snake_y1  <= snake_y0;
-                snake_x0  <= move_x;
-                snake_y0  <= move_y;
-                if (move_eat) begin
-                    if (snake_len < 3'd4)
-                        snake_len <= snake_len + 3'd1;
-                    food_x <= food_x + 3'd3;
-                    food_y <= food_y + 3'd5;
-                    start_message(MSG_SNAKE_EAT, AFTER_BOARD);
+                if (ball_dy && ball_y == 3'd4) begin
+                    if ((ball_x >= paddle_x) && (ball_x <= paddle_x + 3'd2))
+                        next_dy = 1'b0;
+                    else
+                        miss = 1'b1;
+                end
+
+                if (miss) begin
+                    pong_over <= 1'b1;
+                    start_resp(RESP_OVER);
                 end else begin
-                    board_x   <= 4'd0;
-                    board_y   <= 4'd0;
-                    after_msg <= AFTER_PROMPT;
-                    state     <= ST_SEND_BOARD;
+                    if (next_dx)
+                        ball_x <= ball_x + 3'd1;
+                    else
+                        ball_x <= ball_x - 3'd1;
+
+                    if (next_dy)
+                        ball_y <= ball_y + 3'd1;
+                    else
+                        ball_y <= ball_y - 3'd1;
+
+                    ball_dx <= next_dx;
+                    ball_dy <= next_dy;
+                    start_resp(RESP_PONG);
                 end
+            end else begin
+                start_resp(RESP_OVER);
             end
         end
     endtask
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state          <= ST_IDLE;
-            return_state   <= ST_IDLE;
+            state <= ST_IDLE;
             wait_seen_busy <= 1'b0;
-            boot_sent      <= 1'b0;
-            active_msg     <= MSG_BANNER;
-            msg_index      <= 8'd0;
-            after_msg      <= AFTER_NONE;
-            hex_value      <= 32'd0;
-            hex_index      <= 4'd0;
-            board_x        <= 4'd0;
-            board_y        <= 4'd0;
-            tx_data        <= 8'd0;
-            tx_start       <= 1'b0;
-            reset_snake();
+            boot_sent <= 1'b0;
+            resp <= RESP_BANNER;
+            pos <= 6'd0;
+            selected_mem <= 32'd0;
+            mem_id <= 2'd0;
+            tx_data <= 8'd0;
+            tx_start <= 1'b0;
+            reset_pong();
         end else begin
             tx_start <= 1'b0;
-
             case (state)
                 ST_IDLE: begin
                     if (!boot_sent) begin
                         boot_sent <= 1'b1;
-                        start_message(MSG_BANNER, AFTER_NONE);
+                        start_resp(RESP_BANNER);
                     end else if (rx_valid) begin
                         case (rx_data)
-                            "h", "H": start_message(MSG_HELP, AFTER_NONE);
-                            "s", "S": start_message(test_pass ? MSG_PASS : MSG_FAIL, AFTER_PROMPT);
-                            "0": begin
-                                hex_value <= mem0;
-                                start_message(MSG_MEM0, AFTER_HEX);
-                            end
-                            "1": begin
-                                hex_value <= mem1;
-                                start_message(MSG_MEM1, AFTER_HEX);
-                            end
-                            "2": begin
-                                hex_value <= mem2;
-                                start_message(MSG_MEM2, AFTER_HEX);
-                            end
-                            "g", "G": start_message(MSG_SNAKE_HEAD, AFTER_BOARD);
-                            "n", "N": begin
-                                reset_snake();
-                                start_message(MSG_SNAKE_RESET, AFTER_BOARD);
-                            end
-                            "u", "U": move_snake(DIR_UP);
-                            "d", "D": move_snake(DIR_DOWN);
-                            "l", "L": move_snake(DIR_LEFT);
-                            "r", "R": move_snake(DIR_RIGHT);
-                            8'h0d, 8'h0a: start_message(MSG_PROMPT, AFTER_NONE);
-                            default: start_message(MSG_BAD, AFTER_PROMPT);
+                            "h", "H": start_resp(RESP_HELP);
+                            "s", "S": start_resp(RESP_STATUS);
+                            "0": begin selected_mem <= mem0; mem_id <= 2'd0; start_resp(RESP_MEM); end
+                            "1": begin selected_mem <= mem1; mem_id <= 2'd1; start_resp(RESP_MEM); end
+                            "2": begin selected_mem <= mem2; mem_id <= 2'd2; start_resp(RESP_MEM); end
+                            "g", "G": start_resp(RESP_PONG);
+                            "n", "N": begin reset_pong(); start_resp(RESP_RESET); end
+                            "p", "P": start_resp(RESP_METRICS);
+                            "a", "A", "l", "L": step_pong(-1);
+                            "d", "D", "r", "R": step_pong(1);
+                            "x", "X", 8'h20: step_pong(0);
+                            default: start_resp(RESP_BAD);
                         endcase
                     end
                 end
-
-                ST_SEND_MSG: begin
+                ST_SEND: begin
                     if (!tx_busy) begin
-                        if (msg_index < msg_len(active_msg)) begin
-                            tx_data        <= msg_char(active_msg, msg_index);
-                            tx_start       <= 1'b1;
-                            msg_index      <= msg_index + 8'd1;
-                            return_state   <= ST_SEND_MSG;
+                        if (pos < resp_len(resp)) begin
+                            tx_data <= response_char(resp, pos);
+                            tx_start <= 1'b1;
+                            pos <= pos + 6'd1;
                             wait_seen_busy <= 1'b0;
-                            state          <= ST_WAIT_BYTE;
+                            state <= ST_WAIT;
                         end else begin
-                            if (after_msg == AFTER_HEX) begin
-                                hex_index <= 4'd0;
-                                state     <= ST_SEND_HEX;
-                            end else if (after_msg == AFTER_BOARD) begin
-                                render_board_after();
-                            end else if (after_msg == AFTER_METRICS) begin
-                                start_message(MSG_METRICS, AFTER_PROMPT);
-                            end else if (after_msg == AFTER_PROMPT) begin
-                                start_message(MSG_PROMPT, AFTER_NONE);
-                            end else begin
-                                state <= ST_IDLE;
-                            end
+                            state <= ST_IDLE;
                         end
                     end
                 end
-
-                ST_SEND_HEX: begin
-                    if (!tx_busy) begin
-                        if (hex_index < 4'd8) begin
-                            tx_data        <= hex_char((hex_value >> ((4'd7 - hex_index) * 4)) & 4'hF);
-                            tx_start       <= 1'b1;
-                            hex_index      <= hex_index + 4'd1;
-                            return_state   <= ST_SEND_HEX;
-                            wait_seen_busy <= 1'b0;
-                            state          <= ST_WAIT_BYTE;
-                        end else begin
-                            start_message(MSG_CRLF, AFTER_NONE);
-                        end
-                    end
-                end
-
-                ST_SEND_BOARD: begin
-                    if (!tx_busy) begin
-                    if (board_y < 4'd8) begin
-                            tx_data        <= board_char(board_x, board_y);
-                            tx_start       <= 1'b1;
-                            return_state   <= ST_SEND_BOARD;
-                            wait_seen_busy <= 1'b0;
-                            state          <= ST_WAIT_BYTE;
-
-                            if (board_x == 4'd9) begin
-                                board_x <= 4'd0;
-                                board_y <= board_y + 4'd1;
-                            end else begin
-                                board_x <= board_x + 4'd1;
-                            end
-                        end else begin
-                            if (after_msg == AFTER_PROMPT)
-                                start_message(MSG_PROMPT, AFTER_NONE);
-                            else
-                                state <= ST_IDLE;
-                        end
-                    end
-                end
-
-                ST_WAIT_BYTE: begin
+                ST_WAIT: begin
                     if (tx_busy)
                         wait_seen_busy <= 1'b1;
                     else if (wait_seen_busy)
-                        state <= return_state;
+                        state <= ST_SEND;
                 end
-
                 default: state <= ST_IDLE;
             endcase
         end
