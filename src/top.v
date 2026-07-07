@@ -18,11 +18,9 @@ module top (
 );
 
     //----------------------------------------------
-    // 时钟分频 (产生慢速时钟, 让LED可见)
-    // 核心板50MHz时钟较快, 用计数器降频便于观察
+    // 运行计数器, 用于LED状态显示
     //----------------------------------------------
     reg [24:0] clk_cnt;
-    wire clk_slow;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
@@ -30,8 +28,6 @@ module top (
         else
             clk_cnt <= clk_cnt + 25'd1;
     end
-
-    assign clk_slow = clk_cnt[22];
 
     //----------------------------------------------
     // 指令存储器 (ROM, 固化测试程序)
@@ -61,7 +57,7 @@ module top (
     // 五级流水线CPU实例
     //----------------------------------------------
     riscv_pipeline_core u_cpu (
-        .clk        (clk_slow),
+        .clk        (clk),
         .rst_n      (rst_n),
         .instr_addr (instr_addr),
         .instr_data (instr_data),
@@ -83,7 +79,7 @@ module top (
     icache_direct_mapped #(
         .LINES(8)
     ) u_icache (
-        .clk        (clk_slow),
+        .clk        (clk),
         .rst_n      (rst_n),
         .cpu_addr   (instr_addr),
         .mem_addr   (instr_rom_addr),
@@ -103,7 +99,7 @@ module top (
     wire [31:0] mem2;
     wire        test_pass;
 
-    always @(posedge clk_slow) begin
+    always @(posedge clk) begin
         if (data_we) begin
             if (data_be[0]) data_mem[data_addr[7:2]][7:0]   <= data_wdata[7:0];
             if (data_be[1]) data_mem[data_addr[7:2]][15:8]  <= data_wdata[15:8];

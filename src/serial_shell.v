@@ -69,6 +69,7 @@ module serial_shell #(
     localparam MSG_SNAKE_EAT   = 4'd11;
     localparam MSG_SNAKE_OVER  = 4'd12;
     localparam MSG_SNAKE_RESET = 4'd13;
+    localparam MSG_METRICS     = 4'd14;
 
     localparam BANNER_LEN      = 81;
     localparam HELP_LEN        = 61;
@@ -82,6 +83,7 @@ module serial_shell #(
     localparam SNAKE_EAT_LEN   = 18;
     localparam SNAKE_OVER_LEN  = 28;
     localparam SNAKE_RESET_LEN = 15;
+    localparam METRICS_LEN     = 63;
 
     localparam [8*BANNER_LEN-1:0]      BANNER_TEXT      = "\r\nRISC-V CPU shell\r\nh help s status 0/1/2 mem g snake u/d/l/r move n reset\r\ncpu> ";
     localparam [8*HELP_LEN-1:0]        HELP_TEXT        = "h:help s:status 0/1/2:mem g:snake u/d/l/r:move n:reset\r\ncpu> ";
@@ -97,6 +99,7 @@ module serial_shell #(
     localparam [8*SNAKE_EAT_LEN-1:0]   SNAKE_EAT_TEXT   = "\r\nsnake ate food\r\n";
     localparam [8*SNAKE_OVER_LEN-1:0]  SNAKE_OVER_TEXT  = "\r\nsnake game over, n reset\r\n";
     localparam [8*SNAKE_RESET_LEN-1:0] SNAKE_RESET_TEXT = "\r\nsnake reset\r\n";
+    localparam [8*METRICS_LEN-1:0]     METRICS_TEXT     = "freq=50MHz\r\nCPI=1.00 ideal pipeline\r\nthroughput=50 MIPS ideal\r\n";
 
     localparam ST_IDLE       = 3'd0;
     localparam ST_SEND_MSG   = 3'd1;
@@ -108,6 +111,7 @@ module serial_shell #(
     localparam AFTER_HEX    = 3'd1;
     localparam AFTER_PROMPT = 3'd2;
     localparam AFTER_BOARD  = 3'd3;
+    localparam AFTER_METRICS = 3'd4;
 
     localparam DIR_UP    = 2'd0;
     localparam DIR_DOWN  = 2'd1;
@@ -170,6 +174,7 @@ module serial_shell #(
                 MSG_SNAKE_EAT:   msg_len = SNAKE_EAT_LEN[7:0];
                 MSG_SNAKE_OVER:  msg_len = SNAKE_OVER_LEN[7:0];
                 MSG_SNAKE_RESET: msg_len = SNAKE_RESET_LEN[7:0];
+                MSG_METRICS:     msg_len = METRICS_LEN[7:0];
                 default:         msg_len = 8'd0;
             endcase
         end
@@ -194,6 +199,7 @@ module serial_shell #(
                 MSG_SNAKE_EAT:   msg_char = SNAKE_EAT_TEXT[(SNAKE_EAT_LEN - 1 - idx) * 8 +: 8];
                 MSG_SNAKE_OVER:  msg_char = SNAKE_OVER_TEXT[(SNAKE_OVER_LEN - 1 - idx) * 8 +: 8];
                 MSG_SNAKE_RESET: msg_char = SNAKE_RESET_TEXT[(SNAKE_RESET_LEN - 1 - idx) * 8 +: 8];
+                MSG_METRICS:     msg_char = METRICS_TEXT[(METRICS_LEN - 1 - idx) * 8 +: 8];
                 default:         msg_char = 8'h20;
             endcase
         end
@@ -298,7 +304,7 @@ module serial_shell #(
 
             if (snake_over || move_wall) begin
                 snake_over <= 1'b1;
-                start_message(MSG_SNAKE_OVER, AFTER_PROMPT);
+                start_message(MSG_SNAKE_OVER, AFTER_METRICS);
             end else begin
                 snake_dir <= dir;
                 snake_x3  <= move_eat ? snake_x2 : snake_x2;
@@ -395,6 +401,8 @@ module serial_shell #(
                                 state     <= ST_SEND_HEX;
                             end else if (after_msg == AFTER_BOARD) begin
                                 render_board_after();
+                            end else if (after_msg == AFTER_METRICS) begin
+                                start_message(MSG_METRICS, AFTER_PROMPT);
                             end else if (after_msg == AFTER_PROMPT) begin
                                 start_message(MSG_PROMPT, AFTER_NONE);
                             end else begin

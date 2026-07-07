@@ -187,6 +187,14 @@ G redraw
 Q quit
 ```
 
+撞墙结束后，FPGA 会通过串口打印进阶层次性能指标：
+
+```text
+freq=50MHz
+CPI=1.00 ideal pipeline
+throughput=50 MIPS ideal
+```
+
 ## 说明
 
 本项目的 LED 和串口输出不是固定组合逻辑直接生成的，而是来自 CPU 执行 RISC-V 机器指令后写入的数据 RAM。通过更换指令 ROM 内容，同一 CPU 核心可以执行不同程序。
