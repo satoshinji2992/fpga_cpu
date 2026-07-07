@@ -40,6 +40,10 @@ xlnx_auto_*/
 *.exe
 *.wdb
 *.vcd
+/cpu_sim
+/pipe_sim
+/pipeline_sim
+/top_sim
 fuse.log
 fuse.xmsgs
 fuseRelaunch.cmd

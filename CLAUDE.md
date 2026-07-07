@@ -55,8 +55,8 @@ halt                                   # set when the program executes its halt 
 `top` wires `riscv_pipeline_core` + [icache_direct_mapped.v](src/icache_direct_mapped.v) + [serial_shell.v](src/serial_shell.v). Memory is on-chip:
 
 - **Instruction ROM** `reg [31:0] instr_mem [0:63]`, async read (`instr_mem[addr[7:2]]`), initialized by an `initial` block of hand-assembled RV32I machine code.
-- **Data RAM** `reg [31:0] data_mem [0:63]`, word-addressed by `[addr[7:2]]`, per-byte writes gated by `data_be[3:0]`.
-- **I-Cache**: 8-line direct-mapped, look-through — returns ROM data in the same cycle on a miss and fills the line on the next edge. `hit_count`/`miss_count` are exposed but currently unused in `top`.
+- **Data RAM** is split into four byte-wide arrays (`data_mem_b0..b3`) so XST infers distributed RAM instead of thousands of FFs and write muxes; word reads are recombined from the four arrays.
+- **I-Cache**: 8-line direct-mapped, look-through — returns ROM data in the same cycle on a miss and fills the line on the next edge. Hit/miss counters were removed because they were unused on the board and cost extra LUTs.
 - **`halt` instruction** = `JAL x0, 0` (`0x0000006F`); the core raises `halt`.
 - **Self-test pass** condition: `halt && Mem[0]==0x34801200 && Mem[1]==0x0000FFFE && Mem[2]==2`. With no key pressed, all 4 LEDs on = PASS; KEY1–4 display fixed nibbles of `Mem[0..2]`.
 
