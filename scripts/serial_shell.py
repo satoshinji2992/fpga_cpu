@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Host UART client for the CPU-driven dungeon demo.
+"""Host UART client for the CPU-driven shell and dungeon demo.
 
 The FPGA top now exposes UART as memory-mapped I/O to the RISC-V CPU. The
-dungeon program running on the CPU prints the map and waits for WASD bytes.
-This script is only a terminal/client; game logic lives in asm/dungeon.s.
+program running on the CPU parses a tiny shell, starts the dungeon command,
+prints the map, and waits for WASD bytes. This script is only a terminal/client;
+game and shell logic live in asm/dungeon.s.
 """
 
 import argparse
@@ -57,14 +58,35 @@ def open_serial(args: argparse.Namespace) -> serial.Serial:
     return serial.Serial(args.port, args.baud, timeout=0.05)
 
 
-def terminal_mode(args: argparse.Namespace) -> int:
+def raw_dungeon_controls(ser: serial.Serial) -> None:
+    keymap = {
+        "w": b"w", "W": b"w",
+        "a": b"a", "A": b"a",
+        "s": b"s", "S": b"s",
+        "d": b"d", "D": b"d",
+    }
+
+    print("\n[host] dungeon controls: W/A/S/D move, Q returns to CPU shell.")
+    try:
+        while True:
+            ch = read_key()
+            if ch in ("q", "Q", "\x03"):
+                ser.write(b"q")
+                break
+            if ch in keymap:
+                ser.write(keymap[ch])
+    except KeyboardInterrupt:
+        ser.write(b"q")
+
+
+def shell_mode(args: argparse.Namespace) -> int:
     ser = open_serial(args)
     stop_flag = threading.Event()
     thread = threading.Thread(target=reader_thread, args=(ser, stop_flag), daemon=True)
     thread.start()
 
     print(f"Connected to {args.port} at {args.baud} baud.")
-    print("CPU dungeon terminal. Type w/a/s/d then Enter, q to quit.")
+    print("Host shell: type dungeon to enter raw controls, q to quit host.")
     time.sleep(0.2)
 
     try:
@@ -73,8 +95,12 @@ def terminal_mode(args: argparse.Namespace) -> int:
             cmd = line.strip().lower()
             if cmd in ("q", "quit", "exit"):
                 break
-            if cmd:
-                ser.write(cmd[0].encode("ascii", errors="ignore"))
+            if not cmd:
+                ser.write(b"\n")
+                continue
+            ser.write((line + "\n").encode("ascii", errors="ignore"))
+            if cmd in ("d", "dungeon"):
+                raw_dungeon_controls(ser)
     except KeyboardInterrupt:
         pass
     finally:
@@ -91,23 +117,20 @@ def dungeon_mode(args: argparse.Namespace) -> int:
     thread.start()
 
     print(f"Connected to {args.port} at {args.baud} baud.")
-    print("Dungeon mode: W/A/S/D move, Q quit. Game runs on the CPU via MMIO UART.")
+    print("Starting CPU dungeon. Press Q in game to return to shell, Ctrl-C exits host.")
     time.sleep(0.2)
-
-    keymap = {
-        "w": b"w", "W": b"w",
-        "a": b"a", "A": b"a",
-        "s": b"s", "S": b"s",
-        "d": b"d", "D": b"d",
-    }
+    ser.write(b"dungeon\n")
 
     try:
+        raw_dungeon_controls(ser)
         while True:
-            ch = read_key()
-            if ch in ("q", "Q", "\x03"):
+            line = input()
+            cmd = line.strip().lower()
+            if cmd in ("q", "quit", "exit"):
                 break
-            if ch in keymap:
-                ser.write(keymap[ch])
+            ser.write((line + "\n").encode("ascii", errors="ignore"))
+            if cmd in ("d", "dungeon"):
+                raw_dungeon_controls(ser)
     except KeyboardInterrupt:
         pass
     finally:
@@ -118,12 +141,11 @@ def dungeon_mode(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Connect to the FPGA CPU dungeon UART.")
+    parser = argparse.ArgumentParser(description="Connect to the FPGA CPU UART shell.")
     parser.add_argument("-p", "--port", help="Serial port, for example COM5 or /dev/cu.usbserial-130")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate, default 115200")
     parser.add_argument("--list", action="store_true", help="List serial ports and exit")
-    parser.add_argument("--line", action="store_true", help="Line-input mode: type w/a/s/d then Enter")
-    parser.add_argument("--dungeon", action="store_true", help="Single-key WASD dungeon controls (default)")
+    parser.add_argument("--dungeon", action="store_true", help="Start dungeon immediately")
     parser.add_argument("--demo", action="store_true", help="Alias for --dungeon")
     parser.add_argument("--pong", action="store_true", help="Deprecated alias for --dungeon")
     parser.add_argument("--snake", action="store_true", help="Deprecated alias for --dungeon")
@@ -134,9 +156,9 @@ def main() -> int:
         return 0
     if not args.port:
         parser.error("--port is required unless --list is used")
-    if args.line:
-        return terminal_mode(args)
-    return dungeon_mode(args)
+    if args.dungeon or args.demo or args.pong or args.snake:
+        return dungeon_mode(args)
+    return shell_mode(args)
 
 
 if __name__ == "__main__":

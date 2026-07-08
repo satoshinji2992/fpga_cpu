@@ -33,6 +33,27 @@
 # ---------------------------------------------------------------- start / init
 start:
     li   sp, 0x3F0                 # stack near top of data RAM
+    .puts "\nRV32 cpu shell\n"
+    .puts "type dungeon or h\n"
+
+shell_loop:
+    .puts "cpu> "
+    jal  ra, read_cmd
+    li   t0, 'd'
+    beq  a0, t0, game_start
+    li   t0, 'h'
+    beq  a0, t0, shell_help
+    li   t0, 'q'
+    beq  a0, t0, idle
+    .puts "commands: dungeon help quit\n"
+    j    shell_loop
+
+shell_help:
+    .puts "dungeon: start game\n"
+    .puts "in game: wasd move, q shell\n"
+    j    shell_loop
+
+game_start:
     # fill 32 grid cells with floor '.'
     li   t0, 0
     li   t1, 32
@@ -56,6 +77,7 @@ fill:
     sw   t0, PY(x0)
     li   t0, 12
     sw   t0, MHP(x0)
+    .puts "enter dungeon\n"
 
 main_loop:
     jal  ra, render
@@ -84,6 +106,29 @@ rk_w:
     beqz t1, rk_w
     lw   a0, UART_RX(x0)
     sw   x0, UART_RX(x0)           # ack: clears rx_pending
+    ret
+
+# =============================================================== read_cmd() -> a0
+# Reads until CR/LF and returns the first character of the command line.
+read_cmd:
+    addi sp, sp, -8
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    li   s0, 0
+rc_loop:
+    jal  ra, read_key
+    li   t0, 0x0D
+    beq  a0, t0, rc_done
+    li   t0, 0x0A
+    beq  a0, t0, rc_done
+    bnez s0, rc_loop
+    mv   s0, a0
+    j    rc_loop
+rc_done:
+    mv   a0, s0
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    addi sp, sp, 8
     ret
 
 # =============================================================== print_decimal(a0)
@@ -200,17 +245,17 @@ check_end:
 ce_win:
     addi sp, sp, -4
     sw   ra, 0(sp)
-    .puts "\nYOU WIN\n"
+    .puts "\nYOU WIN\nreturn shell\n"
     lw   ra, 0(sp)
     addi sp, sp, 4
-    j    idle
+    j    shell_loop
 ce_lose:
     addi sp, sp, -4
     sw   ra, 0(sp)
-    .puts "\nYOU DIED\n"
+    .puts "\nYOU DIED\nreturn shell\n"
     lw   ra, 0(sp)
     addi sp, sp, 4
-    j    idle
+    j    shell_loop
 
 # =============================================================== process_key(a0)
 process_key:
@@ -231,6 +276,8 @@ process_key:
     beq  a0, t0, pk_lf
     li   t0, 'd'
     beq  a0, t0, pk_rt
+    li   t0, 'q'
+    beq  a0, t0, pk_shell
     j    pk_ret                    # ignore other chars
 pk_up: li s0, 0;  li s1, -1; j pk_mov
 pk_dn: li s0, 0;  li s1, 1;  j pk_mov
@@ -308,6 +355,19 @@ pk_ret:
     lw   s6, 28(sp)
     addi sp, sp, 32
     ret
+
+pk_shell:
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    lw   s2, 12(sp)
+    lw   s3, 16(sp)
+    lw   s4, 20(sp)
+    lw   s5, 24(sp)
+    lw   s6, 28(sp)
+    addi sp, sp, 32
+    .puts "\nleave dungeon\n"
+    j    shell_loop
 
 # -------------------------------------------------------------- halt-free idle
 # (a plain `j self` would encode to 0x0000006F and trigger the core's halt,

@@ -71,8 +71,8 @@ module top #(
     //----------------------------------------------
     // 指令 ROM (异步读) + 直接映射 I-Cache
     //----------------------------------------------
-    reg [31:0] instr_mem [0:511];
-    assign instr_rom_data = instr_mem[instr_rom_addr[10:2]];
+    reg [31:0] instr_mem [0:1023];
+    assign instr_rom_data = instr_mem[instr_rom_addr[11:2]];
 
     icache_direct_mapped #(
         .LINES(8)
@@ -181,7 +181,7 @@ module top #(
 //----------------------------------------------
     integer j;
     initial begin
-        for (j = 0; j < 512; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
+        for (j = 0; j < 1024; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
         for (j = 0; j < 256; j = j + 1) begin
             data_mem_b0[j] = 8'h0;
             data_mem_b1[j] = 8'h0;

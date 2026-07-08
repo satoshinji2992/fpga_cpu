@@ -1,8 +1,8 @@
 //==================================================
 // tb_dungeon.v — end-to-end verification of the CPU-driven UART dungeon.
 //
-// Drives W/A/S/D into top.uart_rx as real serial frames (8N1, CLKS_PER_BIT
-// matching top.v) and captures every byte from top.uart_tx into a log buffer.
+// Drives "dungeon\n" and then W/A/S/D into top.uart_rx as real serial frames
+// (8N1, CLKS_PER_BIT matching top.v), and captures every byte from top.uart_tx.
 // After a scripted play sequence it asserts the captured log contains the
 // player glyph, the monster glyph, the prompt, a combat line, and the win
 // banner — proving render + UART MMIO (both directions) + movement + MUL/DIV
@@ -130,7 +130,16 @@ module tb_dungeon;
         repeat(20) @(posedge clk);
         rst_n = 1'b1;
 
-        // boot render + first prompt
+        // boot CPU shell, then start the game
+        repeat(TURN_CYCLES) @(posedge clk);
+        send_byte("d");
+        send_byte("u");
+        send_byte("n");
+        send_byte("g");
+        send_byte("e");
+        send_byte("o");
+        send_byte("n");
+        send_byte(8'h0A);
         repeat(TURN_CYCLES) @(posedge clk);
 
         // move right 5 times to reach column 6, row 1 (monster is at (6,2))

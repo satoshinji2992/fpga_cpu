@@ -251,19 +251,25 @@ python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
 ```
 
-地牢控制：
+打开后会进入 CPU 串口 shell：
+
+```text
+cpu> dungeon
+```
+
+输入 `dungeon` 后进入游戏控制模式：
 
 ```text
 W/A/S/D  移动
-Q        退出 Python 客户端
+Q        退出游戏并回到 CPU shell
 ```
 
-默认就是单键模式，不需要回车；如果打开串口后没有看到地图，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
+如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
 
-调试时也可以使用行输入模式：
+也可以直接启动游戏：
 
 ```bash
-python scripts/serial_shell.py -p COM5 --line
+python scripts/serial_shell.py -p COM5 --dungeon
 ```
 
 ## 报告表述
