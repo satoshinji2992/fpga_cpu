@@ -249,7 +249,6 @@ PC 端：
 python -m pip install pyserial
 python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
-python scripts/serial_shell.py -p COM5 --dungeon
 ```
 
 地牢控制：
@@ -259,7 +258,13 @@ W/A/S/D  移动
 Q        退出 Python 客户端
 ```
 
-`--dungeon` 是单键模式；不加 `--dungeon` 时也可以输入 `w/a/s/d` 后回车。
+默认就是单键模式，不需要回车；如果打开串口后没有看到地图，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
+
+调试时也可以使用行输入模式：
+
+```bash
+python scripts/serial_shell.py -p COM5 --line
+```
 
 ## 报告表述
 

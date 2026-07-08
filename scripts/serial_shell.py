@@ -122,7 +122,8 @@ def main() -> int:
     parser.add_argument("-p", "--port", help="Serial port, for example COM5 or /dev/cu.usbserial-130")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate, default 115200")
     parser.add_argument("--list", action="store_true", help="List serial ports and exit")
-    parser.add_argument("--dungeon", action="store_true", help="Single-key WASD dungeon controls")
+    parser.add_argument("--line", action="store_true", help="Line-input mode: type w/a/s/d then Enter")
+    parser.add_argument("--dungeon", action="store_true", help="Single-key WASD dungeon controls (default)")
     parser.add_argument("--demo", action="store_true", help="Alias for --dungeon")
     parser.add_argument("--pong", action="store_true", help="Deprecated alias for --dungeon")
     parser.add_argument("--snake", action="store_true", help="Deprecated alias for --dungeon")
@@ -133,9 +134,9 @@ def main() -> int:
         return 0
     if not args.port:
         parser.error("--port is required unless --list is used")
-    if args.dungeon or args.demo or args.pong or args.snake:
-        return dungeon_mode(args)
-    return terminal_mode(args)
+    if args.line:
+        return terminal_mode(args)
+    return dungeon_mode(args)
 
 
 if __name__ == "__main__":
