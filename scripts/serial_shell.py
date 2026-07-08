@@ -8,9 +8,11 @@ inference and shell logic live in asm/cnn_digit.s.
 """
 
 import argparse
+import json
 import sys
 import threading
 import time
+from pathlib import Path
 
 try:
     import serial
@@ -58,56 +60,11 @@ def open_serial(args: argparse.Namespace) -> serial.Serial:
     return serial.Serial(args.port, args.baud, timeout=0.05)
 
 
-SEGMENT_MASKS = {
-    0: 125, 1: 80, 2: 55, 3: 87, 4: 90,
-    5: 79, 6: 111, 7: 81, 8: 127, 9: 95,
-}
-
-
 def digit_pixels(digit: int) -> str:
-    mask = SEGMENT_MASKS[digit]
-    grid = [["0" for _ in range(8)] for _ in range(8)]
-
-    def fill_top():
-        for y in range(0, 2):
-            for x in range(2, 6):
-                grid[y][x] = "1"
-
-    def fill_mid():
-        for y in range(3, 5):
-            for x in range(2, 6):
-                grid[y][x] = "1"
-
-    def fill_bot():
-        for y in range(6, 8):
-            for x in range(2, 6):
-                grid[y][x] = "1"
-
-    def fill_ul():
-        for y in range(1, 4):
-            for x in range(0, 2):
-                grid[y][x] = "1"
-
-    def fill_ur():
-        for y in range(1, 4):
-            for x in range(6, 8):
-                grid[y][x] = "1"
-
-    def fill_ll():
-        for y in range(4, 7):
-            for x in range(0, 2):
-                grid[y][x] = "1"
-
-    def fill_lr():
-        for y in range(4, 7):
-            for x in range(6, 8):
-                grid[y][x] = "1"
-
-    fillers = [fill_top, fill_mid, fill_bot, fill_ul, fill_ur, fill_ll, fill_lr]
-    for bit, filler in enumerate(fillers):
-        if mask & (1 << bit):
-            filler()
-    return "".join("".join(row) for row in grid)
+    model_path = Path(__file__).resolve().parents[1] / "data" / "mnist8_model.json"
+    with model_path.open() as f:
+        model = json.load(f)
+    return model["prototypes"][digit]
 
 
 def print_digit_preview(pixels: str) -> None:

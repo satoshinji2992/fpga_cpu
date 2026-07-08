@@ -141,13 +141,15 @@ def main():
           % (m0, m1, m2, "[OK]" if ok_m else "[FAIL]"))
 
     # 6. custom float32
-    print("\n[6] Custom float32 扩展 (custom-0: FADD32 / FMUL32)")
+    print("\n[6] Custom float32 扩展 (custom-0: FADD32 / FMUL32 / FGT32)")
     fl = res["float"][0]
     f0 = grab(r"Mem\[0\] = ([0-9a-fA-F]+)", fl)
     f1 = grab(r"Mem\[1\] = ([0-9a-fA-F]+)", fl)
-    ok_f = (f0 and f0.lower() == "40700000" and f1 and f1.lower() == "40400000")
-    print("    FADD32 1.5+2.25 = 0x%s (期望40700000)   FMUL32 1.5*2.0 = 0x%s (期望40400000)   %s"
-          % (f0, f1, "[OK]" if ok_f else "[FAIL]"))
+    f2 = grab(r"Mem\[2\] = ([0-9a-fA-F]+)", fl)
+    ok_f = (f0 and f0.lower() == "40700000" and f1 and f1.lower() == "40400000" and
+            f2 and f2.lower() == "00000001")
+    print("    FADD32 1.5+2.25 = 0x%s   FMUL32 1.5*2.0 = 0x%s   FGT32 2.25>1.5 = 0x%s   %s"
+          % (f0, f1, f2, "[OK]" if ok_f else "[FAIL]"))
 
     # 7. custom ISA
     print("\n[7] 自定义 ISA 扩展 (custom-0: POPCOUNT / BITREVERSE)")

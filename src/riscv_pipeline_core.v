@@ -62,6 +62,7 @@ module riscv_pipeline_core #(
     localparam ALU_BITREV   = 5'd11;
     localparam ALU_FADD32   = 5'd12;
     localparam ALU_FMUL32   = 5'd13;
+    localparam ALU_FGT32    = 5'd14;
 
     // Stage 5: custom-0 combinational helpers (functions => XST-friendly).
     function [31:0] popcount;
@@ -174,6 +175,24 @@ module riscv_pipeline_core #(
                 else
                     fadd32 = {sr, er, mr[22:0]};
             end
+        end
+    endfunction
+
+    function fgt32_bit;
+        input [31:0] a;
+        input [31:0] b;
+        reg az, bz;
+        begin
+            az = (a[30:0] == 31'b0);
+            bz = (b[30:0] == 31'b0);
+            if (az && bz)
+                fgt32_bit = 1'b0;
+            else if (a[31] != b[31])
+                fgt32_bit = b[31];          // positive > negative
+            else if (!a[31])
+                fgt32_bit = (a[30:0] > b[30:0]);
+            else
+                fgt32_bit = (a[30:0] < b[30:0]);
         end
     endfunction
 
@@ -347,6 +366,7 @@ module riscv_pipeline_core #(
                 3'b010:  id_alu_ctrl = ALU_BITREV;     // Stage 5
                 3'b011:  id_alu_ctrl = ALU_FADD32;
                 3'b100:  id_alu_ctrl = ALU_FMUL32;
+                3'b101:  id_alu_ctrl = ALU_FGT32;
                 default: id_alu_ctrl = ALU_ADD;
             endcase
         end else begin
@@ -402,6 +422,7 @@ module riscv_pipeline_core #(
             ALU_BITREV:   ex_alu_result = bitreverse(ex_alu_src1);   // Stage 5
             ALU_FADD32:   ex_alu_result = fadd32(ex_alu_src1, ex_rs2_value);
             ALU_FMUL32:   ex_alu_result = fmul32(ex_alu_src1, ex_rs2_value);
+            ALU_FGT32:    ex_alu_result = {31'b0, fgt32_bit(ex_alu_src1, ex_rs2_value)};
             default:      ex_alu_result = 32'b0;
         endcase
     end

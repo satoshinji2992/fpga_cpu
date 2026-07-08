@@ -78,6 +78,7 @@ check("bitrev x1, x2",   asm_one("bitrev x1, x2"),     0x0001208B)  # custom0 f3
 check("popcount x1, x2", asm_one("popcount x1, x2"),   0x0001108B)  # custom0 f3=1
 check("fadd32 x4,x1,x2", asm_one("fadd32 x4, x1, x2"), 0x0020B20B)  # custom0 f3=3
 check("fmul32 x5,x1,x3", asm_one("fmul32 x5, x1, x3"), 0x0030C28B)  # custom0 f3=4
+check("fgt32 x6,x1,x2",  asm_one("fgt32 x6, x1, x2"),  0x0020D30B)  # custom0 f3=5
 
 # ===================== pseudo / macros =====================
 check("nop",             asm_one("nop"),               0x00000013)

@@ -4,8 +4,8 @@ rvasm.py — a small two-pass assembler for the RV32I/M subset + CSR + custom
 instructions implemented by src/riscv_pipeline_core.v in this project.
 
 There is no RISC-V toolchain in this repo; the existing instr_mem programs are
-hand-assembled. This assembler makes real software (e.g. asm/dungeon.s) writable
-in assembly and emits a Verilog initial-block fragment (src/dungeon_prog.vh) that
+hand-assembled. This assembler makes real software (e.g. asm/cnn_digit.s) writable
+in assembly and emits a Verilog initial-block fragment (src/cnn_prog.vh) that
 top.v `include`s to initialize instr_mem.
 
 Supported:
@@ -14,7 +14,7 @@ Supported:
           lui/auipc, ecall/ebreak, csrrs/csrrw (csr read form)
   RV32M   mul/mulh/mulhsu/mulhu/div/divu/rem/remu
   CSR     rdcycle rd, rdinstret rd   (= csrrs rd, 0xC00/0xC02, x0)
-  Custom  popcount rd, rs1 ; bitrev rd, rs1 ; fadd32/fmul32 rd, rs1, rs2
+  Custom  popcount rd, rs1 ; bitrev rd, rs1 ; fadd32/fmul32/fgt32 rd, rs1, rs2
           (opcode 0x0B, custom-0; fadd32/fmul32 are lightweight float32 ops)
   Pseudo  li, mv, nop, j, jr, ret, jal, call, beqz/bnez/bltz/bgez/blez/bgtz,
           not, neg, seqz/snez
@@ -25,12 +25,12 @@ Encoding reference (confirmed against riscv_pipeline_core.v decode):
   R-type  : funct7[31:25] rs2[24:20] rs1[19:15] funct3[14:12] rd[11:7] opcode[6:0]
   RV32M   : opcode 0110011, funct7 0000001, funct3 000..111 = mul..remu
   custom  : opcode 0001011, funct7 0000000, funct3 001=popcount 010=bitrev
-            011=fadd32 100=fmul32
+            011=fadd32 100=fmul32 101=fgt32
   CSR rd  : opcode 1110011, funct3 010 (csrrs), csr=0xC00 cycle / 0xC02 instret
 
 Usage:
-  python3 scripts/rvasm.py asm/dungeon.s --vh src/dungeon_prog.vh --base 0
-  python3 scripts/rvasm.py asm/dungeon.s --hex /tmp/dungeon.hex
+  python3 scripts/rvasm.py asm/cnn_digit.s --vh src/cnn_prog.vh --base 0
+  python3 scripts/rvasm.py asm/cnn_digit.s --hex /tmp/cnn.hex
 """
 
 import sys
@@ -285,7 +285,8 @@ def expand_line(mnemonic, ops, putc_label):
 def _expand_li(rd, imm_tok):
     # imm_tok may be a symbol; we can't fully resolve in expansion, but we can
     # decide addi vs lui+addi only for numeric literals. For symbols, assume
-    # they're small data offsets and use addi (true for this project's data RAM).
+    # they're small data offsets and use addi. Large constants should be written
+    # numerically or with explicit lui/addi.
     try:
         val = int(imm_tok, 0)
     except (ValueError, TypeError):
@@ -439,9 +440,9 @@ class Assembler:
             rd, rs1 = (parse_reg(t) for t in split_operands(ops))
             f3 = 0b001 if mn == "popcount" else 0b010
             return enc_r(OPC_CUSTOM0, rd, f3, rs1, 0, 0b0000000)
-        if mn in ("fadd32", "fmul32"):
+        if mn in ("fadd32", "fmul32", "fgt32"):
             rd, rs1, rs2 = (parse_reg(t) for t in split_operands(ops))
-            f3 = 0b011 if mn == "fadd32" else 0b100
+            f3 = {"fadd32": 0b011, "fmul32": 0b100, "fgt32": 0b101}[mn]
             return enc_r(OPC_CUSTOM0, rd, f3, rs1, rs2, 0b0000000)
         # I-type ALU
         if mn in RI_TAB:

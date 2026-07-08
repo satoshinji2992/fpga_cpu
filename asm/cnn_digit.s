@@ -1,21 +1,25 @@
-# asm/cnn_digit.s — 8x8 fixed-weight digit inference on the RV32 CPU.
+# asm/cnn_digit.s — MNIST 8x8 float32 inference on the RV32 CPU.
 #
-# Host sends 64 ASCII pixels ('0'/'1' or '.'/'#') over UART. The CPU stores the
-# image in data RAM, extracts seven fixed convolution-like stroke features, and
-# classifies the digit by the resulting segment mask. Python is only the UART
-# terminal; inference runs here on the CPU.
+# The model is trained offline by scripts/train_mnist8.py:
+#   score[k] = bias[k] + sum(pixel[i] * weight[k][i])
+#
+# Pixels are 8x8 binary ASCII values sent over UART. Weights and bias live in
+# data RAM via src/cnn_weights.vh. The CPU performs inference with custom
+# float32 instructions fmul32/fadd32/fgt32.
 
-.equ UART_TX,   0x400
-.equ UART_RX,   0x404
-.equ UART_STAT, 0x408
-.equ LED_OUT,   0x40C
+.equ UART_TX,   0x1000
+.equ UART_RX,   0x1004
+.equ UART_STAT, 0x1008
+.equ LED_OUT,   0x100C
 
-.equ IMG, 0x00
-.equ SEG, 0x50
+.equ IMG,     0x000
+.equ WEIGHT,  0x100     # 10 * 64 float32 words
+.equ BIAS,    0xB00     # 10 float32 words
+.equ FONE,    0xB28     # float32 1.0
 
 start:
-    li   sp, 0x3F0
-    .puts "\nRV32 tiny-cnn shell\n"
+    li   sp, 0xF00
+    .puts "\nRV32 mnist8-float shell\n"
     .puts "type cnn or h\n"
 
 shell_loop:
@@ -31,29 +35,33 @@ shell_loop:
     j    shell_loop
 
 shell_help:
-    .puts "cnn: receive 8x8 digit, infer 0-9\n"
+    .puts "cnn: receive 8x8 binary digit\n"
     .puts "host: python scripts/serial_shell.py -p PORT --cnn 7\n"
     j    shell_loop
 
 # =============================================================== putc(a0)
 putc:
     li   t0, 2
+    li   t2, 0x1008
 putc_w:
-    lw   t1, UART_STAT(x0)
+    lw   t1, 0(t2)
     and  t1, t1, t0
     bnez t1, putc_w
-    sw   a0, UART_TX(x0)
+    li   t2, 0x1000
+    sw   a0, 0(t2)
     ret
 
 # =============================================================== read_key() -> a0
 read_key:
     li   t0, 1
+    li   t2, 0x1008
 rk_w:
-    lw   t1, UART_STAT(x0)
+    lw   t1, 0(t2)
     and  t1, t1, t0
     beqz t1, rk_w
-    lw   a0, UART_RX(x0)
-    sw   x0, UART_RX(x0)
+    li   t2, 0x1004
+    lw   a0, 0(t2)
+    sw   x0, 0(t2)
     ret
 
 # =============================================================== read_cmd() -> a0
@@ -115,206 +123,71 @@ ri_store:
 
 # =============================================================== infer_digit()
 infer_digit:
-    addi sp, sp, -16
+    addi sp, sp, -36
     sw   ra, 0(sp)
-    sw   s0, 4(sp)
-    sw   s1, 8(sp)
-    sw   s2, 12(sp)
+    sw   s0, 4(sp)     # class index
+    sw   s1, 8(sp)     # best digit
+    sw   s2, 12(sp)    # best score (float bits)
+    sw   s3, 16(sp)    # current score (float bits)
+    sw   s4, 20(sp)    # weight pointer
+    sw   s5, 24(sp)    # bias pointer
+    sw   s6, 28(sp)    # pixel index
+    sw   s7, 32(sp)    # float one
 
-    # clear seven feature counters
-    li   t0, 0
-    li   t1, 0
-clr_seg:
-    sb   t1, SEG(t0)
-    addi t0, t0, 1
-    li   t2, 7
-    blt  t0, t2, clr_seg
-
-    li   s0, 0                     # y
-    li   s2, 0                     # linear image index
-iy_loop:
-    li   s1, 0                     # x
-ix_loop:
-    lb   t0, IMG(s2)
-    beqz t0, pix_next
-
-    # segment 0: top, y<2 and 2<=x<6
-    li   t1, 2
-    bge  s0, t1, chk_mid
-    blt  s1, t1, chk_mid
-    li   t1, 6
-    bge  s1, t1, chk_mid
-    lb   t2, SEG(x0)
-    addi t2, t2, 1
-    sb   t2, SEG(x0)
-
-chk_mid:
-    # segment 1: middle, 3<=y<5 and 2<=x<6
-    li   t1, 3
-    blt  s0, t1, chk_bot
-    li   t1, 5
-    bge  s0, t1, chk_bot
-    li   t1, 2
-    blt  s1, t1, chk_bot
-    li   t1, 6
-    bge  s1, t1, chk_bot
-    lb   t2, 0x51(x0)
-    addi t2, t2, 1
-    sb   t2, 0x51(x0)
-
-chk_bot:
-    # segment 2: bottom, y>=6 and 2<=x<6
-    li   t1, 6
-    blt  s0, t1, chk_ul
-    li   t1, 2
-    blt  s1, t1, chk_ul
-    li   t1, 6
-    bge  s1, t1, chk_ul
-    lb   t2, 0x52(x0)
-    addi t2, t2, 1
-    sb   t2, 0x52(x0)
-
-chk_ul:
-    # segment 3: upper-left, 1<=y<4 and x<2
-    li   t1, 1
-    blt  s0, t1, chk_ur
-    li   t1, 4
-    bge  s0, t1, chk_ur
-    li   t1, 2
-    bge  s1, t1, chk_ur
-    lb   t2, 0x53(x0)
-    addi t2, t2, 1
-    sb   t2, 0x53(x0)
-
-chk_ur:
-    # segment 4: upper-right, 1<=y<4 and x>=6
-    li   t1, 1
-    blt  s0, t1, chk_ll
-    li   t1, 4
-    bge  s0, t1, chk_ll
-    li   t1, 6
-    blt  s1, t1, chk_ll
-    lb   t2, 0x54(x0)
-    addi t2, t2, 1
-    sb   t2, 0x54(x0)
-
-chk_ll:
-    # segment 5: lower-left, 4<=y<7 and x<2
-    li   t1, 4
-    blt  s0, t1, chk_lr
-    li   t1, 7
-    bge  s0, t1, chk_lr
-    li   t1, 2
-    bge  s1, t1, chk_lr
-    lb   t2, 0x55(x0)
-    addi t2, t2, 1
-    sb   t2, 0x55(x0)
-
-chk_lr:
-    # segment 6: lower-right, 4<=y<7 and x>=6
-    li   t1, 4
-    blt  s0, t1, pix_next
-    li   t1, 7
-    bge  s0, t1, pix_next
-    li   t1, 6
-    blt  s1, t1, pix_next
-    lb   t2, 0x56(x0)
-    addi t2, t2, 1
-    sb   t2, 0x56(x0)
-
-pix_next:
-    addi s2, s2, 1
-    addi s1, s1, 1
-    li   t0, 8
-    blt  s1, t0, ix_loop
-    addi s0, s0, 1
-    li   t0, 8
-    blt  s0, t0, iy_loop
-
-    # Convert counters to a 7-bit mask. Horizontal threshold=4, vertical=3.
     li   s0, 0
-    lb   t0, SEG(x0)
-    li   t1, 4
-    blt  t0, t1, m1
-    ori  s0, s0, 1
-m1:
-    lb   t0, 0x51(x0)
-    li   t1, 4
-    blt  t0, t1, m2
-    ori  s0, s0, 2
-m2:
-    lb   t0, 0x52(x0)
-    li   t1, 4
-    blt  t0, t1, m3
-    ori  s0, s0, 4
-m3:
-    lb   t0, 0x53(x0)
-    li   t1, 3
-    blt  t0, t1, m4
-    ori  s0, s0, 8
-m4:
-    lb   t0, 0x54(x0)
-    li   t1, 3
-    blt  t0, t1, m5
-    ori  s0, s0, 16
-m5:
-    lb   t0, 0x55(x0)
-    li   t1, 3
-    blt  t0, t1, m6
-    ori  s0, s0, 32
-m6:
-    lb   t0, 0x56(x0)
-    li   t1, 3
-    blt  t0, t1, classify
-    ori  s0, s0, 64
+    li   s1, 0
+    li   s2, 0
+    li   s4, 0x100
+    li   s5, 0xB00
+    li   t0, 0xB28
+    lw   s7, 0(t0)
 
-classify:
-    li   t0, 125
-    beq  s0, t0, pred0
-    li   t0, 80
-    beq  s0, t0, pred1
-    li   t0, 55
-    beq  s0, t0, pred2
-    li   t0, 87
-    beq  s0, t0, pred3
-    li   t0, 90
-    beq  s0, t0, pred4
-    li   t0, 79
-    beq  s0, t0, pred5
-    li   t0, 111
-    beq  s0, t0, pred6
-    li   t0, 81
-    beq  s0, t0, pred7
-    li   t0, 127
-    beq  s0, t0, pred8
-    li   t0, 95
-    beq  s0, t0, pred9
-    li   a0, '?'
-    j    pred_emit
-pred0: li a0, '0'; j pred_emit
-pred1: li a0, '1'; j pred_emit
-pred2: li a0, '2'; j pred_emit
-pred3: li a0, '3'; j pred_emit
-pred4: li a0, '4'; j pred_emit
-pred5: li a0, '5'; j pred_emit
-pred6: li a0, '6'; j pred_emit
-pred7: li a0, '7'; j pred_emit
-pred8: li a0, '8'; j pred_emit
-pred9: li a0, '9'; j pred_emit
+class_loop:
+    lw   s3, 0(s5)         # score = bias[class]
+    li   s6, 0
 
-pred_emit:
-    addi t0, a0, -48
-    sw   t0, LED_OUT(x0)
-    mv   s1, a0
+pixel_loop:
+    lb   t0, IMG(s6)
+    beqz t0, pixel_skip
+    lw   t1, 0(s4)         # weight[class][pixel]
+    fmul32 t2, t1, s7      # pixel is 1.0 for set bits
+    fadd32 s3, s3, t2
+pixel_skip:
+    addi s4, s4, 4
+    addi s6, s6, 1
+    li   t3, 64
+    blt  s6, t3, pixel_loop
+
+    beqz s0, best_update
+    fgt32 t0, s3, s2
+    beqz t0, class_next
+best_update:
+    mv   s1, s0
+    mv   s2, s3
+
+class_next:
+    addi s0, s0, 1
+    addi s5, s5, 4
+    li   t0, 10
+    blt  s0, t0, class_loop
+
+    li   t0, 0x100C
+    sw   s1, 0(t0)
     .puts "prediction: "
-    mv   a0, s1
+    addi a0, s1, 48
     jal  ra, putc
     .puts "\n"
+
     lw   ra, 0(sp)
     lw   s0, 4(sp)
     lw   s1, 8(sp)
     lw   s2, 12(sp)
-    addi sp, sp, 16
+    lw   s3, 16(sp)
+    lw   s4, 20(sp)
+    lw   s5, 24(sp)
+    lw   s6, 28(sp)
+    lw   s7, 32(sp)
+    addi sp, sp, 36
     ret
 
 idle:

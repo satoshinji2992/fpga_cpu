@@ -37,6 +37,7 @@
   - `BITREVERSE`
   - `FADD32`
   - `FMUL32`
+  - `FGT32`
 - 2 路组相联 I-Cache + LRU 对比模块：`src/icache_2way.v`
 - 集成分析脚本：`scripts/analyze.py`
 - 小型汇编器：`scripts/rvasm.py`
@@ -81,13 +82,16 @@ src/
 
 asm/
   cnn_digit.s             CPU 自己运行的 8x8 数字推理程序
-  dungeon.s               旧版交互地牢 demo，保留作参考
 
 scripts/
   serial_shell.py         PC 端串口终端 / WASD 控制
+  train_mnist8.py         MNIST -> 8x8 离线训练并导出 float32 权重
   rvasm.py                RV32I/M + CSR + custom 小型汇编器
   test_rvasm.py           汇编器单元测试
   analyze.py              集成回归和指标展示脚本
+
+data/
+  mnist8_model.json       训练后导出的模型元数据和 8x8 演示模板
 
 xilinx.xise              ISE 14.7 工程
 ```
@@ -116,12 +120,12 @@ TEC-PLUS 50MHz 时钟 / RESET
 CPU 通过普通 `LW/SW` 访问外设：
 
 ```text
-0x000-0x3FF  data RAM
-0x400        UART_TX    写低 8 位发送 1 字节
-0x404        UART_RX    读低 8 位接收字节；写任意值清 rx_pending
-0x408        UART_STAT  bit0=rx_pending, bit1=tx_busy
-0x40C        LED_OUT    写低 4 位控制 LED
-0x410        KEY_IN     读 KEY1..KEY4，按下为 1
+0x000-0xFFF  data RAM，含 8x8 图像、MNIST float32 权重和 bias
+0x1000       UART_TX    写低 8 位发送 1 字节
+0x1004       UART_RX    读低 8 位接收字节；写任意值清 rx_pending
+0x1008       UART_STAT  bit0=rx_pending, bit1=tx_busy
+0x100C       LED_OUT    写低 4 位控制 LED
+0x1010       KEY_IN     读 KEY1..KEY4，按下为 1
 ```
 
 ## 支持的指令
@@ -134,7 +138,7 @@ CPU 通过普通 `LW/SW` 访问外设：
 - 乘除法：`MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`
 - 最小 CSR：`RDCYCLE`, `RDINSTRET`
 - 系统停止：`ECALL`, `EBREAK`
-- 自定义：`POPCOUNT`, `BITREVERSE`, `FADD32`, `FMUL32`
+- 自定义：`POPCOUNT`, `BITREVERSE`, `FADD32`, `FMUL32`, `FGT32`
 
 ## 浮点扩展说明
 
@@ -143,6 +147,7 @@ CPU 通过普通 `LW/SW` 访问外设：
 ```text
 fadd32 rd, rs1, rs2   rd = float32(rs1) + float32(rs2)
 fmul32 rd, rs1, rs2   rd = float32(rs1) * float32(rs2)
+fgt32  rd, rs1, rs2   rd = float32(rs1) > float32(rs2) ? 1 : 0
 ```
 
 浮点数以 IEEE-754 single precision 的 32-bit bit pattern 存在普通整数寄存器 `x0-x31` 中，不单独实现 `f0-f31` 浮点寄存器堆。该实现支持 zero、normalized number、符号位和规格化，省略 NaN/Inf/subnormal、舍入模式和异常标志，因此不能等同于完整 RV32F。
@@ -292,7 +297,16 @@ python scripts/serial_shell.py -p COM5 --cnn 7
 
 ## 8x8 数字推理说明
 
-数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、特征提取、分类和结果输出都在 `asm/cnn_digit.s` 中，由 RISC-V CPU 执行。
+数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、float32 推理、argmax 分类和结果输出都在 `asm/cnn_digit.s` 中，由 RISC-V CPU 执行。
+
+模型由 `scripts/train_mnist8.py` 在电脑上离线训练：MNIST 28x28 图像先缩放并二值化为 8x8，再训练一个 `64 -> 10` 的 float32 线性分类器。训练脚本导出：
+
+```text
+src/cnn_weights.vh       FPGA data RAM 初始化，包含 weights[10][64] 和 bias[10]
+data/mnist8_model.json   Python 端演示模板和训练元数据
+```
+
+当前导出模型的测试集准确率约为 `82.45%`。FPGA 上只运行推理，不进行训练。
 
 开机或复位后，CPU 先进入串口 shell：
 
@@ -313,14 +327,14 @@ q     进入空闲等待
 输入图像示例，`#` 表示像素 1，`.` 表示像素 0：
 
 ```text
-..####..
-..######
-......##
-......##
-......##
-......##
-......##
 ........
+........
+..####..
+..####..
+....##..
+...##...
+...##...
+...#....
 ```
 
 CPU 输出：
@@ -335,23 +349,23 @@ cpu>
 ```text
 1. CPU 通过 UART_RX 接收 64 个 ASCII 像素
 2. CPU 将图像写入片上 data RAM
-3. CPU 对 8x8 图像抽取 7 个固定卷积/笔画特征
-4. CPU 将特征阈值化为 7-bit 数字段码
-5. CPU 分类为 0-9，并通过 UART_TX 输出 prediction
-6. CPU 将预测数字写入 LED_OUT
+3. CPU 从 data RAM 读取离线训练得到的 float32 weights/bias
+4. CPU 使用 FMUL32/FADD32 计算 10 个类别分数
+5. CPU 使用 FGT32 做 argmax，得到 prediction
+6. CPU 通过 UART_TX 输出 prediction，并将预测数字写入 LED_OUT
 ```
 
 该 demo 覆盖的 CPU/SoC 功能：
 
 ```text
 UART RX/TX   CPU 通过 MMIO 接收图像、打印预测结果
-数据 RAM     保存 8x8 输入图像和中间特征
+数据 RAM     保存 8x8 输入图像、float32 weights/bias 和中间分数
 LED_OUT      显示预测数字低 4 位
-Load/Store   读写像素、特征计数器和 MMIO 寄存器
-算术运算     特征累加、阈值比较和段码生成
-分支跳转     shell 命令解析、循环、区域判断、分类决策
+Load/Store   读写像素、权重、bias 和 MMIO 寄存器
+FADD32/FMUL32 执行 float32 乘加推理
+FGT32        执行 float32 分数比较和 argmax
+分支跳转     shell 命令解析、循环、像素跳过、分类决策
 I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
-FADD32/FMUL32 可用于后续加载离线训练得到的 float32 权重做推理
 ```
 
 ## 报告表述

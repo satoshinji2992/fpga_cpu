@@ -2,6 +2,7 @@
 // Custom lightweight float32 extension regression.
 //   fadd32: 1.5 + 2.25 = 3.75 -> 0x40700000
 //   fmul32: 1.5 * 2.0  = 3.0  -> 0x40400000
+//   fgt32 : 2.25 > 1.5 -> 1
 //==================================================
 `timescale 1ns/1ps
 module tb_float;
@@ -53,9 +54,11 @@ module tb_float;
         instr_mem[5]  = 32'h00018193; // addi   x3, x3, 0       -> 2.0
         instr_mem[6]  = 32'h0020B20B; // fadd32 x4, x1, x2      -> 3.75
         instr_mem[7]  = 32'h0030C28B; // fmul32 x5, x1, x3      -> 3.0
-        instr_mem[8]  = 32'h00402023; // sw     x4, 0(x0)
-        instr_mem[9]  = 32'h00502223; // sw     x5, 4(x0)
-        instr_mem[10] = 32'h00100073; // ebreak
+        instr_mem[8]  = 32'h0011530B; // fgt32  x6, x2, x1      -> 1
+        instr_mem[9]  = 32'h00402023; // sw     x4, 0(x0)
+        instr_mem[10] = 32'h00502223; // sw     x5, 4(x0)
+        instr_mem[11] = 32'h00602423; // sw     x6, 8(x0)
+        instr_mem[12] = 32'h00100073; // ebreak
     end
 
     initial begin
@@ -65,7 +68,9 @@ module tb_float;
         $display("FLOAT HALT=%0d", halt);
         $display("Mem[0] = %08h (expected 40700000, 1.5+2.25)", data_mem[0]);
         $display("Mem[1] = %08h (expected 40400000, 1.5*2.0)", data_mem[1]);
-        if (halt && (data_mem[0] == 32'h40700000) && (data_mem[1] == 32'h40400000))
+        $display("Mem[2] = %08h (expected 00000001, 2.25>1.5)", data_mem[2]);
+        if (halt && (data_mem[0] == 32'h40700000) && (data_mem[1] == 32'h40400000) &&
+            (data_mem[2] == 32'h00000001))
             $display("FLOAT PASS");
         else
             $display("FLOAT FAIL");

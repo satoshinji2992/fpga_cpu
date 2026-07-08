@@ -102,16 +102,16 @@ module tb_cnn;
         send_byte(8'h0A);
         repeat(WAIT_CYCLES) @(posedge clk);
 
-        send_row("00111100");
-        send_row("00111111");
-        send_row("00000011");
-        send_row("00000011");
-        send_row("00000011");
-        send_row("00000011");
-        send_row("00000011");
         send_row("00000000");
+        send_row("00000000");
+        send_row("00111100");
+        send_row("00111100");
+        send_row("00001100");
+        send_row("00011000");
+        send_row("00011000");
+        send_row("00010000");
         send_byte(8'h0A);
-        repeat(WAIT_CYCLES * 20) @(posedge clk);
+        repeat(WAIT_CYCLES * 60) @(posedge clk);
 
         $display("captured %0d tx bytes", log_len);
         if (!has_prediction7(0)) begin

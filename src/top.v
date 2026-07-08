@@ -4,12 +4,12 @@
 // 并运行一个 8x8 手写数字推理 demo (程序见 asm/cnn_digit.s)。
 //
 // 数据总线地址空间 (字节地址):
-//   0x000 - 0x3FF : 数据 RAM  (256 字, 字节写)
-//   0x400 UART_TX : 写一个字节 -> 串口发送
-//   0x404 UART_RX : 读 -> 收到的字节; 写 -> 应答 (清 rx_pending)
-//   0x408 UART_STAT: 读 -> {30'b0, tx_busy, rx_pending}
-//   0x40C LED_OUT  : 写 -> LED[3:0]
-//   0x410 KEY_IN   : 读 -> {28'b0, ~key4, ~key3, ~key2, ~key1} (按下为1)
+//   0x000 - 0xFFF : 数据 RAM  (1024 字, 字节写; 含 CNN float32 权重)
+//   0x1000 UART_TX : 写一个字节 -> 串口发送
+//   0x1004 UART_RX : 读 -> 收到的字节; 写 -> 应答 (清 rx_pending)
+//   0x1008 UART_STAT: 读 -> {30'b0, tx_busy, rx_pending}
+//   0x100C LED_OUT  : 写 -> LED[3:0]
+//   0x1010 KEY_IN   : 读 -> {28'b0, ~key4, ~key3, ~key2, ~key1} (按下为1)
 // CPU 核心不做任何修改: MMIO 读是组合逻辑, data_ready 恒为 1。
 //==================================================
 module top #(
@@ -87,26 +87,26 @@ module top #(
     );
 
     //----------------------------------------------
-    // 数据 RAM (256 字, 按字节拆成 4 个字节宽阵列
+    // 数据 RAM (1024 字, 按字节拆成 4 个字节宽阵列
     // 以便 XST 稳定推断为分布式 RAM) + MMIO 译码
     //
-    //   RAM 区域 : data_addr[31:10] == 0  (0x000-0x3FF)
-    //   IO  区域 : 其余 (0x400+)
+    //   RAM 区域 : data_addr[31:12] == 0  (0x000-0xFFF)
+    //   IO  区域 : 其余 (0x1000+)
     //----------------------------------------------
-    reg [7:0] data_mem_b0 [0:255];
-    reg [7:0] data_mem_b1 [0:255];
-    reg [7:0] data_mem_b2 [0:255];
-    reg [7:0] data_mem_b3 [0:255];
+    reg [7:0] data_mem_b0 [0:1023];
+    reg [7:0] data_mem_b1 [0:1023];
+    reg [7:0] data_mem_b2 [0:1023];
+    reg [7:0] data_mem_b3 [0:1023];
 
-    wire        ram_sel  = (data_addr[31:10] == 22'b0);
-    wire [7:0]  data_idx = data_addr[9:2];
+    wire        ram_sel  = (data_addr[31:12] == 20'b0);
+    wire [9:0]  data_idx = data_addr[11:2];
     wire        io_sel   = ~ram_sel;
-    wire [9:0]  io_word  = data_addr[11:2];   // 0x400->0x100, 0x404->0x101 ...
-    wire        is_tx    = io_sel & (io_word == 10'h100); // 0x400
-    wire        is_rx    = io_sel & (io_word == 10'h101); // 0x404
-    wire        is_stat  = io_sel & (io_word == 10'h102); // 0x408
-    wire        is_led   = io_sel & (io_word == 10'h103); // 0x40C
-    wire        is_key   = io_sel & (io_word == 10'h104); // 0x410
+    wire [11:0] io_word  = data_addr[13:2];   // 0x1000->0x400, 0x1004->0x401 ...
+    wire        is_tx    = io_sel & (io_word == 12'h400); // 0x1000
+    wire        is_rx    = io_sel & (io_word == 12'h401); // 0x1004
+    wire        is_stat  = io_sel & (io_word == 12'h402); // 0x1008
+    wire        is_led   = io_sel & (io_word == 12'h403); // 0x100C
+    wire        is_key   = io_sel & (io_word == 12'h404); // 0x1010
 
     always @(posedge clk) begin
         if (ram_sel && data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
@@ -177,17 +177,18 @@ module top #(
     assign data_ready = 1'b1;
 
     //----------------------------------------------
-    // 指令 ROM 初始化: NOP 填充 + 数据 RAM 清零 + 游戏程序
+    // 指令 ROM 初始化: NOP 填充 + 数据 RAM 清零 + MNIST8 float32 模型/程序
 //----------------------------------------------
     integer j;
     initial begin
         for (j = 0; j < 1024; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
-        for (j = 0; j < 256; j = j + 1) begin
+        for (j = 0; j < 1024; j = j + 1) begin
             data_mem_b0[j] = 8'h0;
             data_mem_b1[j] = 8'h0;
             data_mem_b2[j] = 8'h0;
             data_mem_b3[j] = 8'h0;
         end
+`include "src/cnn_weights.vh"
 `include "src/cnn_prog.vh"
     end
 

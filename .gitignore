@@ -71,3 +71,4 @@ screenshot*.png
 # Python local files
 __pycache__/
 *.pyc
+/data/MNIST/
