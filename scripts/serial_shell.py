@@ -48,7 +48,7 @@ def read_key() -> str:
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
+        tty.setcbreak(fd)
         return sys.stdin.read(1)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
