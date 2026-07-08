@@ -84,7 +84,7 @@ asm/
   cnn_digit.s             CPU 自己运行的 8x8 数字推理程序
 
 scripts/
-  serial_shell.py         PC 端串口终端 / WASD 控制
+  serial_shell.py         PC 端串口终端 / 8x8 数字图像发送
   train_mnist8.py         MNIST -> 8x8 离线训练并导出 float32 权重
   rvasm.py                RV32I/M + CSR + custom 小型汇编器
   test_rvasm.py           汇编器单元测试
@@ -114,6 +114,32 @@ TEC-PLUS 50MHz 时钟 / RESET
 ```
 
 当前 `top.v` 没有使用 SDRAM，也没有实例化 SDRAM 控制器。
+
+## 板端功能
+
+烧录当前 `top.bit` 后，FPGA 板端运行的是一个完整的 RISC-V 小系统：
+
+```text
+五级流水线 RISC-V CPU
+片上指令 ROM / data RAM
+直接映射 I-Cache
+UART / LED / KEY MMIO
+RV32M 整数乘除法
+custom float32: FADD32 / FMUL32 / FGT32
+custom bit ops: POPCOUNT / BITREVERSE
+MNIST8 float32 数字推理程序
+```
+
+CPU 端程序流程：
+
+```text
+1. 串口输出 CPU shell
+2. 接收 PC 端发送的 8x8 二值数字图像
+3. 从片上 data RAM 读取离线训练得到的 float32 权重和 bias
+4. 使用 FADD32 / FMUL32 计算 10 个类别分数
+5. 使用 FGT32 做 argmax
+6. 通过 UART 输出 prediction，并用 LED 显示预测数字低 4 位
+```
 
 ## MMIO 地址
 
@@ -294,6 +320,39 @@ python scripts/serial_shell.py -p COM5 --cnn 7
 ```
 
 如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
+
+## 快速演示
+
+重新综合并烧录最新版 bitstream 后：
+
+```bash
+python scripts/serial_shell.py --list
+python scripts/serial_shell.py -p /dev/cu.usbserial-130 --cnn 7
+```
+
+预期串口输出包含：
+
+```text
+RV32 mnist8-float shell
+type cnn or h
+cpu> send 64 pixels
+prediction: 7
+cpu>
+```
+
+也可以进入交互 shell：
+
+```bash
+python scripts/serial_shell.py -p /dev/cu.usbserial-130
+```
+
+然后输入：
+
+```text
+cnn
+```
+
+Python 会提示选择 `0-9`，并把 `data/mnist8_model.json` 中的 8x8 演示模板发给 FPGA。
 
 ## 8x8 数字推理说明
 
