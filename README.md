@@ -69,6 +69,7 @@ src/
   serial_shell.v          FPGA 端串口 shell
   tb_cpu_core.v           单周期 CPU 仿真
   tb_pipeline_core.v      流水线 CPU 仿真
+  tb_all_features.v       综合功能演示仿真
   tb_*.v                  拓展功能专项仿真
 
 scripts/
@@ -150,7 +151,16 @@ iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
 python scripts/analyze.py
 ```
 
-当前应看到 6/6 个专项 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M 和自定义指令结果。
+当前应看到 7/7 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M 和自定义指令结果。
+
+综合功能演示程序：
+
+```bash
+iverilog -o all_features_sim src/riscv_pipeline_core.v src/tb_all_features.v
+vvp all_features_sim
+```
+
+预期结果为 `ALL FEATURES PASS`。对应汇编说明在 `asm/all_features_riscv.s`，覆盖 RV32I 基础指令、访存、load-use、分支循环、RV32M 乘除法、custom 指令、CSR 读和 ECALL halt。当前 CPU 不支持浮点指令。
 
 ## ISE 上板
 

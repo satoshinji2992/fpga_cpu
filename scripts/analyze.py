@@ -64,6 +64,7 @@ def main():
         ("branchpredict", ["riscv_pipeline_core.v", "tb_branchpredict.v"]),
         ("muldiv",        ["riscv_pipeline_core.v", "tb_muldiv.v"]),
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
+        ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
     ]
     res = {}
