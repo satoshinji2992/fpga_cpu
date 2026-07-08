@@ -272,6 +272,83 @@ Q        退出游戏并回到 CPU shell
 python scripts/serial_shell.py -p COM5 --dungeon
 ```
 
+## 地牢游戏说明
+
+地牢游戏不是 Python 端模拟的。Python 只负责把键盘输入通过 UART 发给 FPGA，并把 FPGA 串口输出显示出来；真正的 shell、地图渲染、移动、战斗和胜负判断都在 `asm/dungeon.s` 中，由 RISC-V CPU 执行。
+
+开机或复位后，CPU 先进入串口 shell：
+
+```text
+RV32 cpu shell
+type dungeon or h
+cpu>
+```
+
+shell 命令：
+
+```text
+dungeon  启动游戏
+h        显示帮助
+q        进入空闲等待
+```
+
+游戏画面示例：
+
+```text
+........
+.@......
+...#..M.
+........
+HP 20  M 12
+cmd>
+```
+
+符号含义：
+
+```text
+@  玩家
+M  怪物
+#  墙
+.  空地
+HP 玩家血量
+M  怪物血量
+```
+
+游戏操作：
+
+```text
+W/A/S/D  上/左/下/右移动
+Q        退出游戏并回到 CPU shell
+```
+
+通关路线可以直接演示：
+
+```text
+d d d d d s s s s
+```
+
+玩家从 `(1,1)` 出发，怪物在 `(6,2)`。向右走到怪物上方后，继续向下移动会触发攻击。怪物血量降到 0 后，CPU 输出：
+
+```text
+YOU WIN
+return shell
+cpu>
+```
+
+游戏覆盖的 CPU/SoC 功能：
+
+```text
+UART RX/TX   CPU 通过 MMIO 接收按键、打印地图和文本
+数据 RAM     保存地图、玩家坐标、玩家 HP、怪物 HP
+LED_OUT      根据玩家 HP 写 LED 档位
+分支跳转     判断方向、边界、撞墙、战斗、胜负
+Load/Store   读写地图和角色状态
+MUL          计算地图下标 y*8+x，以及暴击伤害
+DIVU/REMU    十进制打印 HP/伤害数值
+RDCYCLE      读取周期计数作为战斗随机输入
+POPCOUNT     根据周期 bit 数决定是否暴击
+```
+
 ## 报告表述
 
 可以概括为：
