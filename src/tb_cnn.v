@@ -2,7 +2,7 @@
 // tb_cnn.v — end-to-end UART verification of CPU 8x8 digit inference.
 //
 // Sends "cnn\n" and one 8x8 digit template as real UART frames, then checks the
-// CPU prints "prediction: 7". Python does not participate in this test.
+// CPU prints "pred 7". Python does not participate in this test.
 //==================================================
 `timescale 1ns/1ps
 module tb_cnn;
@@ -74,12 +74,10 @@ module tb_cnn;
         integer ii;
         begin
             has_prediction7 = 0;
-            for (ii = 0; ii + 12 < log_len; ii = ii + 1)
+            for (ii = 0; ii + 5 < log_len; ii = ii + 1)
                 if (log[ii] == "p" && log[ii+1] == "r" && log[ii+2] == "e" &&
-                    log[ii+3] == "d" && log[ii+4] == "i" && log[ii+5] == "c" &&
-                    log[ii+6] == "t" && log[ii+7] == "i" && log[ii+8] == "o" &&
-                    log[ii+9] == "n" && log[ii+10] == ":" && log[ii+11] == " " &&
-                    log[ii+12] == "7") has_prediction7 = 1;
+                    log[ii+3] == "d" && log[ii+4] == " " && log[ii+5] == "7")
+                    has_prediction7 = 1;
         end
     endfunction
 
@@ -115,7 +113,7 @@ module tb_cnn;
 
         $display("captured %0d tx bytes", log_len);
         if (!has_prediction7(0)) begin
-            $display("  missing prediction: 7");
+            $display("  missing pred 7");
             fails = fails + 1;
         end
         if (led !== 4'h7) begin

@@ -60,6 +60,9 @@
     <file xil_pn:name="src/tb_cnn.v" xil_pn:type="FILE_VERILOG">
       <association xil_pn:name="BehavioralSimulation" xil_pn:seqID="2"/>
     </file>
+    <file xil_pn:name="src/tb_shell.v" xil_pn:type="FILE_VERILOG">
+      <association xil_pn:name="BehavioralSimulation" xil_pn:seqID="2"/>
+    </file>
     <file xil_pn:name="src/tb_float.v" xil_pn:type="FILE_VERILOG">
       <association xil_pn:name="BehavioralSimulation" xil_pn:seqID="2"/>
     </file>

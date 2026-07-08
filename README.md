@@ -1,6 +1,6 @@
 # FPGA RISC-V CPU
 
-面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及一个 CPU 自己运行的 8x8 手写数字推理 demo。
+面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及 CPU 自己运行的串口 shell、8x8 手写数字推理和 Pong demo。
 
 ## 当前实现
 
@@ -23,7 +23,7 @@
 - 8 行直接映射 I-Cache：`src/icache_direct_mapped.v`
 - LED / KEY / UART memory-mapped I/O
 - CPU 通过 MMIO 自己读 UART 输入、写 UART 输出
-- CPU 自己运行 8x8 数字推理程序：`asm/cnn_digit.s`
+- CPU 自己运行串口 shell、8x8 数字推理和 Pong 程序：`asm/cnn_digit.s`
 - Python 串口终端：`scripts/serial_shell.py`
 - 硬件性能计数器：cycle、instret、branch、flush、load-use stall、branch miss、mdu inst
 - 最小 CSR 读取：`RDCYCLE` / `RDINSTRET`
@@ -51,13 +51,14 @@
   - `src/tb_csr.v`
   - `src/tb_demo.v`
   - `src/tb_cnn.v`
+  - `src/tb_shell.v`
 
 ### 未实现或部分实现
 
 - 未使用 SDRAM，当前只使用片上 ROM/RAM
 - 未实现完整异常、中断和特权架构
 - 未实现 MMU / 虚拟内存
-- 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32`
+- 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32/FGT32`
 - 当前顶层仍使用直接映射 I-Cache；2 路组相联 cache 主要用于仿真对比
 - PPA 多方案对比需要在 Windows / ISE 14.7 综合后填写真实面积、时序和功耗数据
 
@@ -77,14 +78,15 @@ src/
   tb_pipeline_core.v      流水线 CPU 仿真
   tb_all_features.v       综合功能演示仿真
   tb_cnn.v                CPU 自主 UART MMIO 数字推理仿真
+  tb_shell.v              CPU shell / Pong UART 仿真
   tb_float.v              custom float32 加法/乘法仿真
   tb_*.v                  拓展功能专项仿真
 
 asm/
-  cnn_digit.s             CPU 自己运行的 8x8 数字推理程序
+  cnn_digit.s             CPU 自己运行的 shell / CNN / Pong 程序
 
 scripts/
-  serial_shell.py         PC 端串口终端 / 8x8 数字图像发送
+  serial_shell.py         PC 端串口终端 / 8x8 数字图像发送 / Pong 控制
   train_mnist8.py         MNIST -> 8x8 离线训练并导出 float32 权重
   rvasm.py                RV32I/M + CSR + custom 小型汇编器
   test_rvasm.py           汇编器单元测试
@@ -128,17 +130,19 @@ RV32M 整数乘除法
 custom float32: FADD32 / FMUL32 / FGT32
 custom bit ops: POPCOUNT / BITREVERSE
 MNIST8 float32 数字推理程序
+CPU Pong 交互 demo
 ```
 
 CPU 端程序流程：
 
 ```text
-1. 串口输出 CPU shell
-2. 接收 PC 端发送的 8x8 二值数字图像
-3. 从片上 data RAM 读取离线训练得到的 float32 权重和 bias
-4. 使用 FADD32 / FMUL32 计算 10 个类别分数
-5. 使用 FGT32 做 argmax
-6. 通过 UART 输出 prediction，并用 LED 显示预测数字低 4 位
+1. 复位后进入 CPU shell，显示 cpu> prompt
+2. shell 解析 help/status/mem/perf/led/cnn/pong 等命令
+3. cnn 命令接收 PC 端发送的 8x8 二值数字图像
+4. CPU 从片上 data RAM 读取离线训练得到的 float32 权重和 bias
+5. CPU 使用 FADD32/FMUL32/FGT32 完成推理和 argmax
+6. pong 命令进入 CPU Pong，小球/挡板/得分状态由 RISC-V 指令计算
+7. 所有输出通过 UART_TX MMIO 打印，LED 显示预测值或 Pong 分数低 4 位
 ```
 
 ## MMIO 地址
@@ -219,7 +223,7 @@ iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
 python scripts/analyze.py
 ```
 
-当前应看到 9/9 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、自定义指令和 CNN 推理结果。
+当前应看到 10/10 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、自定义指令、CNN 推理和 shell/Pong 结果。
 
 8x8 数字推理端到端仿真：
 
@@ -229,7 +233,17 @@ iverilog -I src -o tb_cnn src/top.v src/riscv_pipeline_core.v \
 vvp tb_cnn
 ```
 
-预期结果为 `CNN PASS`。该测试用真实 UART bit frame 向 FPGA 输入 `cnn` 命令和 8x8 数字图像，并捕获 CPU 通过 UART MMIO 打印的 `prediction: 7`。
+预期结果为 `CNN PASS`。该测试用真实 UART bit frame 向 FPGA 输入 `cnn` 命令和 8x8 数字图像，并捕获 CPU 通过 UART MMIO 打印的 `pred 7`。
+
+CPU shell / Pong 端到端仿真：
+
+```bash
+iverilog -I src -o tb_shell src/top.v src/riscv_pipeline_core.v \
+  src/icache_direct_mapped.v src/uart_rx.v src/uart_tx.v src/tb_shell.v
+vvp tb_shell
+```
+
+预期结果为 `SHELL PASS`。该测试通过真实 UART bit frame 发送 `h/s/m1/p/led a/pong/d/q`，验证 shell、性能计数器读取、LED MMIO 和 Pong 状态更新都在 CPU 端执行。
 
 重新汇编 CNN 程序：
 
@@ -283,7 +297,7 @@ TXD    D6
 
 ## 上板现象
 
-FPGA 上电后，CPU 执行固化在 `top.v` 指令 ROM 中的 8x8 数字推理程序。串口进入 CPU shell，输入 `cnn` 后，CPU 等待 PC 端发送 64 个像素，并在片上 RAM 中完成特征提取和分类。
+FPGA 上电后，CPU 执行固化在 `top.v` 指令 ROM 中的 shell 程序。串口进入 CPU shell，输入 `cnn` 后，CPU 等待 PC 端发送 64 个像素并完成分类；输入 `pong` 后，CPU 维护 Pong 状态并通过串口输出画面状态。
 
 ```text
 LED 显示预测数字的低 4 位
@@ -310,13 +324,49 @@ python scripts/serial_shell.py -p COM5
 打开后会进入 CPU 串口 shell：
 
 ```text
-cpu> cnn
+RV32 shell
+cpu>
+```
+
+常用命令：
+
+```text
+help 或 h       显示命令列表
+status 或 s     打印 CPU/串口状态
+mem N / mN      读取 data RAM word 0..3
+0 / 1 / 2 / 3   旧版短命令，读取对应 data RAM word
+perf 或 p       读取 cycle 计数器
+ledX            设置 LED，X 为 0..f
+cnn             进入 8x8 数字推理
+pong            进入 CPU Pong
+q               板端程序进入 idle
 ```
 
 输入 `cnn` 后，Python 会提示选择 0-9，并发送对应的 8x8 图像。也可以直接启动一次推理：
 
 ```bash
 python scripts/serial_shell.py -p COM5 --cnn 7
+```
+
+也可以发送自己画的 8x8 文本图，`#`/`1` 表示亮点，`.`/`0` 表示暗点：
+
+```bash
+python scripts/serial_shell.py -p COM5 --cnn 0 --image image.txt
+```
+
+也可以直接启动 Pong：
+
+```bash
+python scripts/serial_shell.py -p COM5 --pong
+```
+
+Pong 控制：
+
+```text
+a / d   移动挡板
+s 或空格 走一步
+n       重新开始
+q       退出 Pong，回到 host shell
 ```
 
 如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
@@ -333,10 +383,9 @@ python scripts/serial_shell.py -p /dev/cu.usbserial-130 --cnn 7
 预期串口输出包含：
 
 ```text
-RV32 mnist8-float shell
-type cnn or h
-cpu> send 64 pixels
-prediction: 7
+RV32 shell
+cpu> pixels64
+pred 7
 cpu>
 ```
 
@@ -352,7 +401,8 @@ python scripts/serial_shell.py -p /dev/cu.usbserial-130
 cnn
 ```
 
-Python 会提示选择 `0-9`，并把 `data/mnist8_model.json` 中的 8x8 演示模板发给 FPGA。
+Python 会提示选择 `0-9`，并把 `data/mnist8_model.json` 中的 8x8 演示模板发给 FPGA；输入 `pong` 会进入键盘控制的 Pong。
+如果想自己画图，直接编辑仓库根目录的 `image.txt`，然后用 `--image image.txt` 发送。
 
 ## 8x8 数字推理说明
 
@@ -370,17 +420,14 @@ data/mnist8_model.json   Python 端演示模板和训练元数据
 开机或复位后，CPU 先进入串口 shell：
 
 ```text
-RV32 tiny-cnn shell
-type cnn or h
+RV32 shell
 cpu>
 ```
 
 shell 命令：
 
 ```text
-cnn   接收 8x8 数字图像并推理
-h     显示帮助
-q     进入空闲等待
+h/? s 0-3 mN p ledX cnn pong q
 ```
 
 输入图像示例，`#` 表示像素 1，`.` 表示像素 0：
@@ -399,7 +446,7 @@ q     进入空闲等待
 CPU 输出：
 
 ```text
-prediction: 7
+pred 7
 cpu>
 ```
 
@@ -427,8 +474,18 @@ FGT32        执行 float32 分数比较和 argmax
 I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
 ```
 
+## CPU Pong 说明
+
+Pong 不是 Python 端模拟的游戏。Python 只发送 `a/d/s/n/q` 按键，CPU 在 `asm/cnn_digit.s` 中维护小球位置、速度、挡板、得分和 game-over 状态。每次输入后，CPU 输出一行状态：
+
+```text
+P bx by pad over score
+```
+
+例如 `P 4 2 3 0 0` 表示小球在 `(4,2)`，挡板左端在 `3`，未结束，得分为 `0`。该 demo 主要用于直观看到 UART RX/TX、分支、访存、算术、状态机和 LED MMIO 都由 CPU 指令驱动。
+
 ## 报告表述
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED 和 CPU 自主 8x8 数字推理 demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED、CPU shell、CPU 自主 8x8 数字推理和 CPU Pong demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。

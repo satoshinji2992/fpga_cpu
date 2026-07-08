@@ -69,6 +69,8 @@ def main():
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
         ("cnn",           ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
+        ("shell",         ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
     ]
     res = {}
     for label, srcs in TBS:
