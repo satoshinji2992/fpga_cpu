@@ -20,6 +20,10 @@ module tb_pipeline_core;
     wire [31:0] data_rdata;
     wire        data_ready;
     wire        halt;
+    wire [31:0] perf_cycle;
+    wire [31:0] perf_instret;
+    wire [31:0] perf_branch;
+    wire [31:0] perf_flush;
 
     riscv_pipeline_core u_cpu (
         .clk        (clk),
@@ -33,7 +37,11 @@ module tb_pipeline_core;
         .data_we    (data_we),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
-        .halt       (halt)
+        .halt       (halt),
+        .perf_cycle   (perf_cycle),
+        .perf_instret (perf_instret),
+        .perf_branch  (perf_branch),
+        .perf_flush   (perf_flush)
     );
 
     initial begin
@@ -101,7 +109,7 @@ module tb_pipeline_core;
     end
 
     initial begin
-        #900;
+        #2000;
         $display("");
         $display("=======================================");
         $display("PIPELINE CPU HALT=%0d at %0t", halt, $time);
@@ -115,6 +123,8 @@ module tb_pipeline_core;
             $display("PIPELINE PASS");
         else
             $display("PIPELINE FAIL");
+        $display("PERF cycle=%0d instret=%0d branch=%0d flush=%0d",
+                 perf_cycle, perf_instret, perf_branch, perf_flush);
         $display("=======================================");
         $finish;
     end

@@ -65,6 +65,7 @@ webtalk_pn.xml
 
 # Local screenshots / temporary notes
 screenshot*.png
+/fpga_cpu/
 
 # Python local files
 __pycache__/

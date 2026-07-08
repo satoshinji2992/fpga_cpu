@@ -28,7 +28,14 @@ module serial_shell #(
     input  wire        test_pass,
     input  wire [31:0] mem0,
     input  wire [31:0] mem1,
-    input  wire [31:0] mem2
+    input  wire [31:0] mem2,
+    input  wire [31:0] mem3,
+    // Live hardware performance counters (Stages 0-4), printed by 'p'.
+    input  wire [31:0] perf_cycle,
+    input  wire [31:0] perf_instret,
+    input  wire [31:0] perf_branch,
+    input  wire [31:0] perf_flush,
+    input  wire [31:0] perf_bp_miss
 );
 
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD;
@@ -57,6 +64,7 @@ module serial_shell #(
     localparam RESP_METRICS = 4'd7;
     localparam RESP_BAD     = 4'd8;
     localparam RESP_PROMPT  = 4'd9;
+    localparam RESP_PERF    = 4'd10;  // live hardware perf counters
 
     localparam ST_IDLE = 2'd0;
     localparam ST_SEND = 2'd1;
@@ -123,6 +131,7 @@ module serial_shell #(
                 RESP_METRICS: resp_len = 6'd26; // "freq=50MHz CPI=1 T=50MIPS\r\n"
                 RESP_BAD:     resp_len = 6'd7;  // "?\r\ncpu> "
                 RESP_PROMPT:  resp_len = 6'd5;  // "cpu> "
+                RESP_PERF:    resp_len = 6'd38; // "c=8h i=8h b=2h f=2h m=2h\r\n"
                 default:      resp_len = 6'd0;
             endcase
         end
@@ -207,6 +216,50 @@ module serial_shell #(
                 RESP_METRICS: response_char = metrics_rom[p];
                 RESP_BAD:     response_char = bad_rom[p];
                 RESP_PROMPT:  response_char = prompt_rom[p];
+                RESP_PERF: begin
+                    // "c=XXXXXXXX i=XXXXXXXX b=XX f=XX m=XX\r\n" (hex)
+                    case (p)
+                        6'd0:  response_char = "c";
+                        6'd1:  response_char = "=";
+                        6'd2:  response_char = hex_char(perf_cycle[31:28]);
+                        6'd3:  response_char = hex_char(perf_cycle[27:24]);
+                        6'd4:  response_char = hex_char(perf_cycle[23:20]);
+                        6'd5:  response_char = hex_char(perf_cycle[19:16]);
+                        6'd6:  response_char = hex_char(perf_cycle[15:12]);
+                        6'd7:  response_char = hex_char(perf_cycle[11:8]);
+                        6'd8:  response_char = hex_char(perf_cycle[7:4]);
+                        6'd9:  response_char = hex_char(perf_cycle[3:0]);
+                        6'd10: response_char = " ";
+                        6'd11: response_char = "i";
+                        6'd12: response_char = "=";
+                        6'd13: response_char = hex_char(perf_instret[31:28]);
+                        6'd14: response_char = hex_char(perf_instret[27:24]);
+                        6'd15: response_char = hex_char(perf_instret[23:20]);
+                        6'd16: response_char = hex_char(perf_instret[19:16]);
+                        6'd17: response_char = hex_char(perf_instret[15:12]);
+                        6'd18: response_char = hex_char(perf_instret[11:8]);
+                        6'd19: response_char = hex_char(perf_instret[7:4]);
+                        6'd20: response_char = hex_char(perf_instret[3:0]);
+                        6'd21: response_char = " ";
+                        6'd22: response_char = "b";
+                        6'd23: response_char = "=";
+                        6'd24: response_char = hex_char(perf_branch[7:4]);
+                        6'd25: response_char = hex_char(perf_branch[3:0]);
+                        6'd26: response_char = " ";
+                        6'd27: response_char = "f";
+                        6'd28: response_char = "=";
+                        6'd29: response_char = hex_char(perf_flush[7:4]);
+                        6'd30: response_char = hex_char(perf_flush[3:0]);
+                        6'd31: response_char = " ";
+                        6'd32: response_char = "m";
+                        6'd33: response_char = "=";
+                        6'd34: response_char = hex_char(perf_bp_miss[7:4]);
+                        6'd35: response_char = hex_char(perf_bp_miss[3:0]);
+                        6'd36: response_char = 8'h0d;
+                        6'd37: response_char = 8'h0a;
+                        default: response_char = 8'h20;
+                    endcase
+                end
                 RESP_STATUS: begin
                     if (test_pass) begin
                         case (p)
@@ -289,6 +342,7 @@ module serial_shell #(
                             "0": begin selected_mem <= mem0; mem_id <= 2'd0; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
                             "1": begin selected_mem <= mem1; mem_id <= 2'd1; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
                             "2": begin selected_mem <= mem2; mem_id <= 2'd2; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
+                            "3": begin selected_mem <= mem3; mem_id <= 2'd3; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
                             "g", "G": begin resp <= RESP_PONG; pos <= 6'd0; state <= ST_SEND; end
                             "n", "N": begin
                                 // reset_pong, inlined
@@ -296,7 +350,7 @@ module serial_shell #(
                                 ball_dy <= 1'b1; paddle_x <= 3'd2; pong_over <= 1'b0;
                                 resp <= RESP_RESET; pos <= 6'd0; state <= ST_SEND;
                             end
-                            "p", "P": begin resp <= RESP_METRICS; pos <= 6'd0; state <= ST_SEND; end
+                            "p", "P": begin resp <= RESP_PERF;   pos <= 6'd0; state <= ST_SEND; end
                             "a", "A", "l", "L", "d", "D", "r", "R", "x", "X", 8'h20: begin
                                 // step_pong, inlined; paddle direction comes from rx_data
                                 if (rx_left && paddle_x != 3'd0)

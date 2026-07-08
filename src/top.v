@@ -50,6 +50,8 @@ module top (
     wire        data_ready;
 
     wire        halt;
+    wire [31:0] perf_cycle, perf_instret, perf_branch, perf_flush, perf_load_use_stall;
+    wire [31:0] perf_bp_miss, perf_mdu_inst;
 
     //----------------------------------------------
     // 五级流水线CPU实例
@@ -66,7 +68,14 @@ module top (
         .data_we    (data_we),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
-        .halt       (halt)
+        .halt       (halt),
+        .perf_cycle         (perf_cycle),
+        .perf_instret       (perf_instret),
+        .perf_branch        (perf_branch),
+        .perf_flush         (perf_flush),
+        .perf_load_use_stall(perf_load_use_stall),
+        .perf_bp_miss       (perf_bp_miss),
+        .perf_mdu_inst      (perf_mdu_inst)
     );
 
     //----------------------------------------------
@@ -99,6 +108,7 @@ module top (
     wire [31:0] mem0;
     wire [31:0] mem1;
     wire [31:0] mem2;
+    wire [31:0] mem3;
     wire        test_pass;
 
     always @(posedge clk) begin
@@ -114,10 +124,11 @@ module top (
     assign mem0 = {data_mem_b3[6'd0], data_mem_b2[6'd0], data_mem_b1[6'd0], data_mem_b0[6'd0]};
     assign mem1 = {data_mem_b3[6'd1], data_mem_b2[6'd1], data_mem_b1[6'd1], data_mem_b0[6'd1]};
     assign mem2 = {data_mem_b3[6'd2], data_mem_b2[6'd2], data_mem_b1[6'd2], data_mem_b0[6'd2]};
+    assign mem3 = {data_mem_b3[6'd3], data_mem_b2[6'd3], data_mem_b1[6'd3], data_mem_b0[6'd3]};
     assign test_pass = halt &&
-                       (mem0 == 32'h3480_1200) &&
-                       (mem1 == 32'h0000_FFFE) &&
-                       (mem2 == 32'd2);
+                       (mem0 == 32'd42) &&    // MUL 7*6
+                       (mem1 == 32'd55) &&    // sum 1+..+10
+                       (mem2 == 32'd8);       // POPCOUNT(0xFF)
 
     //----------------------------------------------
     // 串口交互Shell (115200 8N1)
@@ -134,7 +145,13 @@ module top (
         .test_pass (test_pass),
         .mem0      (mem0),
         .mem1      (mem1),
-        .mem2      (mem2)
+        .mem2      (mem2),
+        .mem3      (mem3),
+        .perf_cycle   (perf_cycle),
+        .perf_instret (perf_instret),
+        .perf_branch  (perf_branch),
+        .perf_flush   (perf_flush),
+        .perf_bp_miss (perf_bp_miss)
     );
 
     //----------------------------------------------
@@ -154,39 +171,34 @@ module top (
             data_mem_b3[j] = 8'h0;
         end
 
-        instr_mem[0]  = 32'hFFF00093; // ADDI x1,  x0, -1
-        instr_mem[1]  = 32'h01200113; // ADDI x2,  x0, 0x12
-        instr_mem[2]  = 32'h002000A3; // SB   x2,  1(x0)
-        instr_mem[3]  = 32'h00100183; // LB   x3,  1(x0)
-        instr_mem[4]  = 32'h00104203; // LBU  x4,  1(x0)
-        instr_mem[5]  = 32'hF8000293; // ADDI x5,  x0, -128
-        instr_mem[6]  = 32'h00500123; // SB   x5,  2(x0)
-        instr_mem[7]  = 32'h00200303; // LB   x6,  2(x0)
-        instr_mem[8]  = 32'h00204383; // LBU  x7,  2(x0)
-        instr_mem[9]  = 32'h03400413; // ADDI x8,  x0, 0x34
-        instr_mem[10] = 32'h008001A3; // SB   x8,  3(x0)
-        instr_mem[11] = 32'hFFE00513; // ADDI x10, x0, -2
-        instr_mem[12] = 32'h00A01223; // SH   x10, 4(x0)
-        instr_mem[13] = 32'h00401583; // LH   x11, 4(x0)
-        instr_mem[14] = 32'h00405603; // LHU  x12, 4(x0)
-        instr_mem[15] = 32'h00500693; // ADDI x13, x0, 5
-        instr_mem[16] = 32'h00500713; // ADDI x14, x0, 5
-        instr_mem[17] = 32'h00E68463; // BEQ  x13, x14, +8
-        instr_mem[18] = 32'h00100793; // ADDI x15, x0, 1 (skipped)
-        instr_mem[19] = 32'h00200793; // ADDI x15, x0, 2
-        instr_mem[20] = 32'h00105463; // BGE  x0,  x1,  +8
-        instr_mem[21] = 32'h00300793; // ADDI x15, x0, 3 (skipped)
-        instr_mem[22] = 32'h00F02423; // SW   x15, 8(x0)
-        instr_mem[23] = 32'h0000006F; // JAL  x0,  0 (halt)
+        // 综合演示程序: 一次跑通 RV32M 乘法 + 计数循环(分支预测) +
+        // POPCOUNT(自定义指令)。结果: mem0=MUL, mem1=sum, mem2=POPCOUNT.
+        instr_mem[0]  = 32'h00700093; // ADDI x1, x0, 7
+        instr_mem[1]  = 32'h00600113; // ADDI x2, x0, 6
+        instr_mem[2]  = 32'h022081B3; // MUL  x3, x1, x2      -> 42
+        instr_mem[3]  = 32'h00302023; // SW   x3, 0(x0)       -> mem0 = 42
+        instr_mem[4]  = 32'h00000213; // ADDI x4, x0, 0       (sum)
+        instr_mem[5]  = 32'h00100293; // ADDI x5, x0, 1       (i)
+        instr_mem[6]  = 32'h00B00313; // ADDI x6, x0, 11      (bound)
+        instr_mem[7]  = 32'h00520233; // ADD  x4, x4, x5      (loop:)
+        instr_mem[8]  = 32'h00128293; // ADDI x5, x5, 1
+        instr_mem[9]  = 32'hFE62CCE3; // BLT  x5, x6, -8      (-> loop)
+        instr_mem[10] = 32'h00402223; // SW   x4, 4(x0)       -> mem1 = 55
+        instr_mem[11] = 32'h0FF00393; // ADDI x7, x0, 0xFF
+        instr_mem[12] = 32'h0003940B; // POPCOUNT x8, x7      -> 8
+        instr_mem[13] = 32'h00802423; // SW   x8, 8(x0)       -> mem2 = 8
+        instr_mem[14] = 32'hC00024F3; // RDCYCLE  x9         -> x9 = cycle (CSR read)
+        instr_mem[15] = 32'h00902623; // SW       x9, 12(x0) -> Mem[3] = cycle
+        instr_mem[16] = 32'h00000073; // ECALL (halt, 异常)
     end
 
     //----------------------------------------------
     // 核心板LED输出
     // 默认: 4个LED全亮表示测试通过
-    // KEY1: 显示Mem[0][31:28] = 4'h3
-    // KEY2: 显示Mem[0][23:20] = 4'h8
-    // KEY3: 显示Mem[1][3:0]   = 4'hE
-    // KEY4: 显示Mem[2][3:0]   = 4'h2
+    // KEY1: Mem[0][3:0]=0xA  (MUL 7*6=42)
+    // KEY2: Mem[1][3:0]=0x7  (sum 1+..+10=55)
+    // KEY3: Mem[2][3:0]=0x8  (POPCOUNT 0xFF=8)
+    // KEY4: halt 状态 (停机=0xF)
     //----------------------------------------------
     localparam LED_ACTIVE_LOW = 1'b0;
 
@@ -195,15 +207,15 @@ module top (
 
     always @(*) begin
         if (!key1)
-            led_data = mem0[31:28];
+            led_data = mem0[3:0];
         else if (!key2)
-            led_data = mem0[23:20];
-        else if (!key3)
             led_data = mem1[3:0];
-        else if (!key4)
+        else if (!key3)
             led_data = mem2[3:0];
+        else if (!key4)
+            led_data = halt ? 4'hF : 4'h0;
         else
-            led_data = test_pass ? 4'hF : {halt, clk_cnt[24], mem2 == 32'd2, 1'b0};
+            led_data = test_pass ? 4'hF : {halt, clk_cnt[24], 1'b1, 1'b0};
     end
 
     assign led_drive = LED_ACTIVE_LOW ? ~led_data : led_data;
