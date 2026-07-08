@@ -76,6 +76,8 @@ check("csrrs x1,cycle,x0", asm_one("csrrs x1, cycle, x0"), 0xC00020F3)
 check("ebreak",          asm_one("ebreak"),            0x00100073)
 check("bitrev x1, x2",   asm_one("bitrev x1, x2"),     0x0001208B)  # custom0 f3=2
 check("popcount x1, x2", asm_one("popcount x1, x2"),   0x0001108B)  # custom0 f3=1
+check("fadd32 x4,x1,x2", asm_one("fadd32 x4, x1, x2"), 0x0020B20B)  # custom0 f3=3
+check("fmul32 x5,x1,x3", asm_one("fmul32 x5, x1, x3"), 0x0030C28B)  # custom0 f3=4
 
 # ===================== pseudo / macros =====================
 check("nop",             asm_one("nop"),               0x00000013)

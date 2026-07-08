@@ -35,6 +35,8 @@
 - 自定义 custom-0 指令：
   - `POPCOUNT`
   - `BITREVERSE`
+  - `FADD32`
+  - `FMUL32`
 - 2 路组相联 I-Cache + LRU 对比模块：`src/icache_2way.v`
 - 集成分析脚本：`scripts/analyze.py`
 - 小型汇编器：`scripts/rvasm.py`
@@ -43,6 +45,7 @@
   - `src/tb_branchpredict.v`
   - `src/tb_cache.v`
   - `src/tb_muldiv.v`
+  - `src/tb_float.v`
   - `src/tb_custom.v`
   - `src/tb_csr.v`
   - `src/tb_demo.v`
@@ -53,7 +56,7 @@
 - 未使用 SDRAM，当前只使用片上 ROM/RAM
 - 未实现完整异常、中断和特权架构
 - 未实现 MMU / 虚拟内存
-- 未实现浮点运算
+- 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32`
 - 当前顶层仍使用直接映射 I-Cache；2 路组相联 cache 主要用于仿真对比
 - PPA 多方案对比需要在 Windows / ISE 14.7 综合后填写真实面积、时序和功耗数据
 
@@ -73,6 +76,7 @@ src/
   tb_pipeline_core.v      流水线 CPU 仿真
   tb_all_features.v       综合功能演示仿真
   tb_cnn.v                CPU 自主 UART MMIO 数字推理仿真
+  tb_float.v              custom float32 加法/乘法仿真
   tb_*.v                  拓展功能专项仿真
 
 asm/
@@ -130,7 +134,18 @@ CPU 通过普通 `LW/SW` 访问外设：
 - 乘除法：`MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`
 - 最小 CSR：`RDCYCLE`, `RDINSTRET`
 - 系统停止：`ECALL`, `EBREAK`
-- 自定义：`POPCOUNT`, `BITREVERSE`
+- 自定义：`POPCOUNT`, `BITREVERSE`, `FADD32`, `FMUL32`
+
+## 浮点扩展说明
+
+当前没有实现完整 RISC-V `F` 扩展，而是在 custom-0 opcode 下实现了面向推理任务的轻量浮点指令：
+
+```text
+fadd32 rd, rs1, rs2   rd = float32(rs1) + float32(rs2)
+fmul32 rd, rs1, rs2   rd = float32(rs1) * float32(rs2)
+```
+
+浮点数以 IEEE-754 single precision 的 32-bit bit pattern 存在普通整数寄存器 `x0-x31` 中，不单独实现 `f0-f31` 浮点寄存器堆。该实现支持 zero、normalized number、符号位和规格化，省略 NaN/Inf/subnormal、舍入模式和异常标志，因此不能等同于完整 RV32F。
 
 ## 仿真验证
 
@@ -173,7 +188,7 @@ iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
 python scripts/analyze.py
 ```
 
-当前应看到 8/8 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、自定义指令和 CNN 推理结果。
+当前应看到 9/9 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、自定义指令和 CNN 推理结果。
 
 8x8 数字推理端到端仿真：
 
@@ -198,7 +213,16 @@ iverilog -o all_features_sim src/riscv_pipeline_core.v src/tb_all_features.v
 vvp all_features_sim
 ```
 
-预期结果为 `ALL FEATURES PASS`。对应汇编说明在 `asm/all_features_riscv.s`，覆盖 RV32I 基础指令、访存、load-use、分支循环、RV32M 乘除法、custom 指令、CSR 读和 ECALL halt。当前 CPU 不支持浮点指令。
+预期结果为 `ALL FEATURES PASS`。对应汇编说明在 `asm/all_features_riscv.s`，覆盖 RV32I 基础指令、访存、load-use、分支循环、RV32M 乘除法、custom 指令、CSR 读和 ECALL halt。
+
+custom float32 扩展专项测试：
+
+```bash
+iverilog -o float_sim src/riscv_pipeline_core.v src/tb_float.v
+vvp float_sim
+```
+
+预期结果为 `FLOAT PASS`，其中 `1.5 + 2.25 = 3.75`、`1.5 * 2.0 = 3.0` 均以 float32 bit pattern 验证。
 
 ## ISE 上板
 
@@ -327,10 +351,11 @@ Load/Store   读写像素、特征计数器和 MMIO 寄存器
 算术运算     特征累加、阈值比较和段码生成
 分支跳转     shell 命令解析、循环、区域判断、分类决策
 I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
+FADD32/FMUL32 可用于后续加载离线训练得到的 float32 权重做推理
 ```
 
 ## 报告表述
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED 和 CPU 自主 8x8 数字推理 demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED 和 CPU 自主 8x8 数字推理 demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。

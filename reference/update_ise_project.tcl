@@ -28,6 +28,7 @@ xfile add "src/tb_loaduse.v" -view Simulation
 xfile add "src/tb_branchpredict.v" -view Simulation
 xfile add "src/tb_cache.v" -view Simulation
 xfile add "src/tb_muldiv.v" -view Simulation
+xfile add "src/tb_float.v" -view Simulation
 xfile add "src/tb_custom.v" -view Simulation
 xfile add "src/tb_csr.v" -view Simulation
 xfile add "src/tb_demo.v" -view Simulation

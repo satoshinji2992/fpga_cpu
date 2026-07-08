@@ -63,6 +63,7 @@ def main():
         ("load-use",      ["riscv_pipeline_core.v", "tb_loaduse.v"]),
         ("branchpredict", ["riscv_pipeline_core.v", "tb_branchpredict.v"]),
         ("muldiv",        ["riscv_pipeline_core.v", "tb_muldiv.v"]),
+        ("float",         ["riscv_pipeline_core.v", "tb_float.v"]),
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
@@ -139,8 +140,17 @@ def main():
     print("    MUL 7*6 = %s (期望42)   DIV 7/6 = %s (期望1)   REM 7%%6 = %s (期望1)   %s"
           % (m0, m1, m2, "[OK]" if ok_m else "[FAIL]"))
 
-    # 6. custom ISA
-    print("\n[6] 自定义 ISA 扩展 (custom-0: POPCOUNT / BITREVERSE)")
+    # 6. custom float32
+    print("\n[6] Custom float32 扩展 (custom-0: FADD32 / FMUL32)")
+    fl = res["float"][0]
+    f0 = grab(r"Mem\[0\] = ([0-9a-fA-F]+)", fl)
+    f1 = grab(r"Mem\[1\] = ([0-9a-fA-F]+)", fl)
+    ok_f = (f0 and f0.lower() == "40700000" and f1 and f1.lower() == "40400000")
+    print("    FADD32 1.5+2.25 = 0x%s (期望40700000)   FMUL32 1.5*2.0 = 0x%s (期望40400000)   %s"
+          % (f0, f1, "[OK]" if ok_f else "[FAIL]"))
+
+    # 7. custom ISA
+    print("\n[7] 自定义 ISA 扩展 (custom-0: POPCOUNT / BITREVERSE)")
     cu = res["custom"][0]
     c0 = grab(r"Mem\[0\] = (\d+)", cu, int)
     c1 = grab(r"Mem\[1\] = ([0-9a-fA-F]+)", cu)
@@ -148,8 +158,8 @@ def main():
     print("    POPCOUNT(0xABCD00FF) = %s (期望18)   BITREV = 0x%s (期望 ff00b3d5)   %s"
           % (c0, c1, "[OK]" if ok_c else "[FAIL]"))
 
-    # 7. requirement coverage
-    print("\n[7] 课程设计要求覆盖 (对照图片需求清单)")
+    # 8. requirement coverage
+    print("\n[8] 课程设计要求覆盖 (对照图片需求清单)")
     cov = [
         ("进阶: CPU + 内存 + Cache + I/O 系统集成",            True),
         ("进阶: 小型测试程序完整运行",                         npass == len(TBS)),
@@ -158,6 +168,7 @@ def main():
         ("拓展: 动态分支预测 (2-bit BHT)",                     pm is not None),
         ("拓展: Cache 组相联 + LRU + 命中率分析",              tw is not None),
         ("拓展: 乘除法扩展指令 (RV32M)",                       ok_m),
+        ("拓展: 浮点运算扩展指令 (custom float32)",             ok_f),
         ("拓展: 自定义 ISA 扩展设计",                          ok_c),
         ("PPA 权衡分析 (面积/功耗/频率)",                      False),  # 需本地 ISE 综合填实
     ]

@@ -57,9 +57,11 @@ module riscv_pipeline_core #(
     localparam ALU_XOR  = 5'd7;
     localparam ALU_SLT  = 5'd8;
     localparam ALU_SLTU = 5'd9;
-    // Stage 5: custom-0 extension opcodes (POPCOUNT / BITREVERSE).
+    // Stage 5: custom-0 extension opcodes.
     localparam ALU_POPCOUNT = 5'd10;
     localparam ALU_BITREV   = 5'd11;
+    localparam ALU_FADD32   = 5'd12;
+    localparam ALU_FMUL32   = 5'd13;
 
     // Stage 5: custom-0 combinational helpers (functions => XST-friendly).
     function [31:0] popcount;
@@ -79,6 +81,99 @@ module riscv_pipeline_core #(
         begin
             for (p = 0; p < 32; p = p + 1)
                 bitreverse[31-p] = x[p];
+        end
+    endfunction
+
+    // Minimal IEEE-754 single-precision helpers for inference workloads.
+    // They handle zero, normalized numbers, signs, and truncating normalization.
+    // NaN/Inf/subnormal/rounding-mode/exception flags are intentionally omitted:
+    // this is a custom lightweight float datapath, not full RV32F.
+    function [31:0] fmul32;
+        input [31:0] a;
+        input [31:0] b;
+        reg sign;
+        reg [7:0] ea, eb;
+        reg [8:0] er;
+        reg [23:0] ma, mb;
+        reg [47:0] prod;
+        begin
+            sign = a[31] ^ b[31];
+            ea = a[30:23];
+            eb = b[30:23];
+            if ((a[30:0] == 31'b0) || (b[30:0] == 31'b0)) begin
+                fmul32 = 32'b0;
+            end else begin
+                ma = {1'b1, a[22:0]};
+                mb = {1'b1, b[22:0]};
+                prod = ma * mb;
+                er = {1'b0, ea} + {1'b0, eb} - 9'd127;
+                if (prod[47]) begin
+                    er = er + 9'd1;
+                    fmul32 = {sign, er[7:0], prod[46:24]};
+                end else begin
+                    fmul32 = {sign, er[7:0], prod[45:23]};
+                end
+            end
+        end
+    endfunction
+
+    function [31:0] fadd32;
+        input [31:0] a;
+        input [31:0] b;
+        reg sa, sb, sr;
+        reg [7:0] ea, eb, er;
+        reg [24:0] ma, mb, mr;
+        reg [7:0] diff;
+        integer sh;
+        begin
+            sa = a[31]; sb = b[31];
+            ea = a[30:23]; eb = b[30:23];
+            ma = (a[30:0] == 31'b0) ? 25'b0 : {1'b0, 1'b1, a[22:0]};
+            mb = (b[30:0] == 31'b0) ? 25'b0 : {1'b0, 1'b1, b[22:0]};
+
+            if (ma == 25'b0) begin
+                fadd32 = b;
+            end else if (mb == 25'b0) begin
+                fadd32 = a;
+            end else begin
+                if (ea >= eb) begin
+                    diff = ea - eb;
+                    er = ea;
+                    mb = (diff > 8'd24) ? 25'b0 : (mb >> diff);
+                end else begin
+                    diff = eb - ea;
+                    er = eb;
+                    ma = (diff > 8'd24) ? 25'b0 : (ma >> diff);
+                end
+
+                if (sa == sb) begin
+                    mr = ma + mb;
+                    sr = sa;
+                    if (mr[24]) begin
+                        mr = mr >> 1;
+                        er = er + 8'd1;
+                    end
+                end else begin
+                    if (ma >= mb) begin
+                        mr = ma - mb;
+                        sr = sa;
+                    end else begin
+                        mr = mb - ma;
+                        sr = sb;
+                    end
+                    for (sh = 0; sh < 24; sh = sh + 1) begin
+                        if (!mr[23] && (mr != 25'b0) && (er != 8'b0)) begin
+                            mr = mr << 1;
+                            er = er - 8'd1;
+                        end
+                    end
+                end
+
+                if (mr == 25'b0)
+                    fadd32 = 32'b0;
+                else
+                    fadd32 = {sr, er, mr[22:0]};
+            end
         end
     endfunction
 
@@ -250,6 +345,8 @@ module riscv_pipeline_core #(
             case (id_funct3)
                 3'b001:  id_alu_ctrl = ALU_POPCOUNT;   // Stage 5
                 3'b010:  id_alu_ctrl = ALU_BITREV;     // Stage 5
+                3'b011:  id_alu_ctrl = ALU_FADD32;
+                3'b100:  id_alu_ctrl = ALU_FMUL32;
                 default: id_alu_ctrl = ALU_ADD;
             endcase
         end else begin
@@ -303,6 +400,8 @@ module riscv_pipeline_core #(
             ALU_SLTU:     ex_alu_result = {31'b0, (ex_alu_src1 < ex_alu_src2)};
             ALU_POPCOUNT: ex_alu_result = popcount(ex_alu_src1);     // Stage 5
             ALU_BITREV:   ex_alu_result = bitreverse(ex_alu_src1);   // Stage 5
+            ALU_FADD32:   ex_alu_result = fadd32(ex_alu_src1, ex_rs2_value);
+            ALU_FMUL32:   ex_alu_result = fmul32(ex_alu_src1, ex_rs2_value);
             default:      ex_alu_result = 32'b0;
         endcase
     end

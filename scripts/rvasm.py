@@ -14,7 +14,8 @@ Supported:
           lui/auipc, ecall/ebreak, csrrs/csrrw (csr read form)
   RV32M   mul/mulh/mulhsu/mulhu/div/divu/rem/remu
   CSR     rdcycle rd, rdinstret rd   (= csrrs rd, 0xC00/0xC02, x0)
-  Custom  popcount rd, rs1 ; bitrev rd, rs1   (opcode 0x0B, custom-0)
+  Custom  popcount rd, rs1 ; bitrev rd, rs1 ; fadd32/fmul32 rd, rs1, rs2
+          (opcode 0x0B, custom-0; fadd32/fmul32 are lightweight float32 ops)
   Pseudo  li, mv, nop, j, jr, ret, jal, call, beqz/bnez/bltz/bgez/blez/bgtz,
           not, neg, seqz/snez
   Macros  .word w,...  .putc 'c'  .puts "str"  .align n  .org addr
@@ -23,7 +24,8 @@ Supported:
 Encoding reference (confirmed against riscv_pipeline_core.v decode):
   R-type  : funct7[31:25] rs2[24:20] rs1[19:15] funct3[14:12] rd[11:7] opcode[6:0]
   RV32M   : opcode 0110011, funct7 0000001, funct3 000..111 = mul..remu
-  custom  : opcode 0001011, funct7 0000000, rs2 00000, funct3 001=popcount 010=bitrev
+  custom  : opcode 0001011, funct7 0000000, funct3 001=popcount 010=bitrev
+            011=fadd32 100=fmul32
   CSR rd  : opcode 1110011, funct3 010 (csrrs), csr=0xC00 cycle / 0xC02 instret
 
 Usage:
@@ -437,6 +439,10 @@ class Assembler:
             rd, rs1 = (parse_reg(t) for t in split_operands(ops))
             f3 = 0b001 if mn == "popcount" else 0b010
             return enc_r(OPC_CUSTOM0, rd, f3, rs1, 0, 0b0000000)
+        if mn in ("fadd32", "fmul32"):
+            rd, rs1, rs2 = (parse_reg(t) for t in split_operands(ops))
+            f3 = 0b011 if mn == "fadd32" else 0b100
+            return enc_r(OPC_CUSTOM0, rd, f3, rs1, rs2, 0b0000000)
         # I-type ALU
         if mn in RI_TAB:
             rd, rs1, imm = split_operands(ops)
