@@ -221,6 +221,7 @@ PC 端：
 python -m pip install pyserial
 python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
+python scripts/serial_shell.py -p COM5 --demo
 ```
 
 常用命令：
@@ -251,6 +252,8 @@ Ping-Pong 演示：
 ```bash
 python scripts/serial_shell.py -p COM5 --pong
 ```
+
+更直观的答辩演示推荐使用 `--demo`。它会自动读取 `s/0/1/2/3/p`，把内存结果翻译成 “MUL、分支循环、POPCOUNT、RDCYCLE、CPI、分支预测命中率” 等说明，并提供简单菜单继续刷新或控制 Pong。
 
 漏接小球后，FPGA 通过串口输出：
 
