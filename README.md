@@ -1,6 +1,6 @@
 # FPGA RISC-V CPU
 
-面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及一个 CPU 自己运行的交互式地牢游戏。
+面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及一个 CPU 自己运行的 8x8 手写数字推理 demo。
 
 ## 当前实现
 
@@ -23,7 +23,7 @@
 - 8 行直接映射 I-Cache：`src/icache_direct_mapped.v`
 - LED / KEY / UART memory-mapped I/O
 - CPU 通过 MMIO 自己读 UART 输入、写 UART 输出
-- CPU 自己运行回合制地牢游戏：`asm/dungeon.s`
+- CPU 自己运行 8x8 数字推理程序：`asm/cnn_digit.s`
 - Python 串口终端：`scripts/serial_shell.py`
 - 硬件性能计数器：cycle、instret、branch、flush、load-use stall、branch miss、mdu inst
 - 最小 CSR 读取：`RDCYCLE` / `RDINSTRET`
@@ -46,7 +46,7 @@
   - `src/tb_custom.v`
   - `src/tb_csr.v`
   - `src/tb_demo.v`
-  - `src/tb_dungeon.v`
+  - `src/tb_cnn.v`
 
 ### 未实现或部分实现
 
@@ -68,15 +68,16 @@ src/
   top.v                   FPGA 顶层
   top.ucf                 TEC-PLUS 核心板引脚约束
   uart_rx.v / uart_tx.v   UART 收发
-  dungeon_prog.vh         由 asm/dungeon.s 生成的指令 ROM 初始化
+  cnn_prog.vh             由 asm/cnn_digit.s 生成的指令 ROM 初始化
   tb_cpu_core.v           单周期 CPU 仿真
   tb_pipeline_core.v      流水线 CPU 仿真
   tb_all_features.v       综合功能演示仿真
-  tb_dungeon.v            CPU 自主 UART MMIO 地牢游戏仿真
+  tb_cnn.v                CPU 自主 UART MMIO 数字推理仿真
   tb_*.v                  拓展功能专项仿真
 
 asm/
-  dungeon.s               CPU 自己运行的交互式地牢游戏
+  cnn_digit.s             CPU 自己运行的 8x8 数字推理程序
+  dungeon.s               旧版交互地牢 demo，保留作参考
 
 scripts/
   serial_shell.py         PC 端串口终端 / WASD 控制
@@ -172,22 +173,22 @@ iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
 python scripts/analyze.py
 ```
 
-当前应看到 8/8 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、自定义指令和 dungeon 结果。
+当前应看到 8/8 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、自定义指令和 CNN 推理结果。
 
-地牢游戏端到端仿真：
+8x8 数字推理端到端仿真：
 
 ```bash
-iverilog -I src -o tb_dungeon src/top.v src/riscv_pipeline_core.v \
-  src/icache_direct_mapped.v src/uart_rx.v src/uart_tx.v src/tb_dungeon.v
-vvp tb_dungeon
+iverilog -I src -o tb_cnn src/top.v src/riscv_pipeline_core.v \
+  src/icache_direct_mapped.v src/uart_rx.v src/uart_tx.v src/tb_cnn.v
+vvp tb_cnn
 ```
 
-预期结果为 `DUNGEON PASS`。该测试用真实 UART bit frame 向 FPGA 输入 `W/A/S/D`，并捕获 CPU 通过 UART MMIO 打印的地图、战斗和胜利文本。
+预期结果为 `CNN PASS`。该测试用真实 UART bit frame 向 FPGA 输入 `cnn` 命令和 8x8 数字图像，并捕获 CPU 通过 UART MMIO 打印的 `prediction: 7`。
 
-重新汇编地牢程序：
+重新汇编 CNN 程序：
 
 ```bash
-python scripts/rvasm.py asm/dungeon.s --vh src/dungeon_prog.vh
+python scripts/rvasm.py asm/cnn_digit.s --vh src/cnn_prog.vh
 ```
 
 综合功能演示程序：
@@ -227,13 +228,13 @@ TXD    D6
 
 ## 上板现象
 
-FPGA 上电后，CPU 执行固化在 `top.v` 指令 ROM 中的地牢游戏程序。串口会打印地图，玩家用 `W/A/S/D` 移动，撞到怪物后 CPU 自己执行战斗逻辑。
+FPGA 上电后，CPU 执行固化在 `top.v` 指令 ROM 中的 8x8 数字推理程序。串口进入 CPU shell，输入 `cnn` 后，CPU 等待 PC 端发送 64 个像素，并在片上 RAM 中完成特征提取和分类。
 
 ```text
-LED 显示玩家 HP 档位
+LED 显示预测数字的低 4 位
 ```
 
-这些输出来自 CPU 执行 RISC-V 指令后通过 MMIO 写 UART/LED，不是固定组合逻辑直接生成。
+这些输出来自 CPU 执行 RISC-V 指令后通过 MMIO 读 UART、写 UART/LED，不是固定组合逻辑直接生成。
 
 ## UART 交互
 
@@ -254,103 +255,82 @@ python scripts/serial_shell.py -p COM5
 打开后会进入 CPU 串口 shell：
 
 ```text
-cpu> dungeon
+cpu> cnn
 ```
 
-输入 `dungeon` 后进入游戏控制模式：
+输入 `cnn` 后，Python 会提示选择 0-9，并发送对应的 8x8 图像。也可以直接启动一次推理：
 
-```text
-W/A/S/D  移动
-Q        退出游戏并回到 CPU shell
+```bash
+python scripts/serial_shell.py -p COM5 --cnn 7
 ```
 
 如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
 
-也可以直接启动游戏：
+## 8x8 数字推理说明
 
-```bash
-python scripts/serial_shell.py -p COM5 --dungeon
-```
-
-## 地牢游戏说明
-
-地牢游戏不是 Python 端模拟的。Python 只负责把键盘输入通过 UART 发给 FPGA，并把 FPGA 串口输出显示出来；真正的 shell、地图渲染、移动、战斗和胜负判断都在 `asm/dungeon.s` 中，由 RISC-V CPU 执行。
+数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、特征提取、分类和结果输出都在 `asm/cnn_digit.s` 中，由 RISC-V CPU 执行。
 
 开机或复位后，CPU 先进入串口 shell：
 
 ```text
-RV32 cpu shell
-type dungeon or h
+RV32 tiny-cnn shell
+type cnn or h
 cpu>
 ```
 
 shell 命令：
 
 ```text
-dungeon  启动游戏
-h        显示帮助
-q        进入空闲等待
+cnn   接收 8x8 数字图像并推理
+h     显示帮助
+q     进入空闲等待
 ```
 
-游戏画面示例：
+输入图像示例，`#` 表示像素 1，`.` 表示像素 0：
 
 ```text
+..####..
+..######
+......##
+......##
+......##
+......##
+......##
 ........
-.@......
-...#..M.
-........
-HP 20  M 12
-cmd>
 ```
 
-符号含义：
+CPU 输出：
 
 ```text
-@  玩家
-M  怪物
-#  墙
-.  空地
-HP 玩家血量
-M  怪物血量
-```
-
-游戏操作：
-
-```text
-W/A/S/D  上/左/下/右移动
-Q        退出游戏并回到 CPU shell
-```
-
-通关路线可以直接演示：
-
-```text
-d d d d d s s s s
-```
-
-玩家从 `(1,1)` 出发，怪物在 `(6,2)`。向右走到怪物上方后，继续向下移动会触发攻击。怪物血量降到 0 后，CPU 输出：
-
-```text
-YOU WIN
-return shell
+prediction: 7
 cpu>
 ```
 
-游戏覆盖的 CPU/SoC 功能：
+推理流程：
 
 ```text
-UART RX/TX   CPU 通过 MMIO 接收按键、打印地图和文本
-数据 RAM     保存地图、玩家坐标、玩家 HP、怪物 HP
-LED_OUT      根据玩家 HP 写 LED 档位
-分支跳转     判断方向、边界、撞墙、战斗、胜负
-Load/Store   读写地图和角色状态
-MUL          计算地图下标 y*8+x，以及暴击伤害
-DIVU/REMU    十进制打印 HP/伤害数值
-RDCYCLE      读取周期计数作为战斗随机输入
-POPCOUNT     根据周期 bit 数决定是否暴击
+1. CPU 通过 UART_RX 接收 64 个 ASCII 像素
+2. CPU 将图像写入片上 data RAM
+3. CPU 对 8x8 图像抽取 7 个固定卷积/笔画特征
+4. CPU 将特征阈值化为 7-bit 数字段码
+5. CPU 分类为 0-9，并通过 UART_TX 输出 prediction
+6. CPU 将预测数字写入 LED_OUT
+```
+
+该 demo 覆盖的 CPU/SoC 功能：
+
+```text
+UART RX/TX   CPU 通过 MMIO 接收图像、打印预测结果
+数据 RAM     保存 8x8 输入图像和中间特征
+LED_OUT      显示预测数字低 4 位
+Load/Store   读写像素、特征计数器和 MMIO 寄存器
+算术运算     特征累加、阈值比较和段码生成
+分支跳转     shell 命令解析、循环、区域判断、分类决策
+I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
 ```
 
 ## 报告表述
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED 和 CPU 自主串口地牢游戏进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED 和 CPU 自主 8x8 数字推理 demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。

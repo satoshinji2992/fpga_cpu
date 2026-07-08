@@ -66,8 +66,8 @@ def main():
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
-        ("dungeon",       ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "uart_rx.v", "uart_tx.v", "tb_dungeon.v"]),
+        ("cnn",           ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
     ]
     res = {}
     for label, srcs in TBS:

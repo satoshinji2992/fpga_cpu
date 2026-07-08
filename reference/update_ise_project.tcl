@@ -1,4 +1,4 @@
-# Rebuild/update the ISE project source list for the current CPU dungeon design.
+# Rebuild/update the ISE project source list for the current CPU CNN demo design.
 # Run from the repository root in ISE Tcl console if Project Navigator loses
 # source associations.
 
@@ -23,7 +23,7 @@ xfile add "src/icache_2way.v"
 xfile add "src/tb_cpu_core.v" -view Simulation
 xfile add "src/tb_pipeline_core.v" -view Simulation
 xfile add "src/tb_all_features.v" -view Simulation
-xfile add "src/tb_dungeon.v" -view Simulation
+xfile add "src/tb_cnn.v" -view Simulation
 xfile add "src/tb_loaduse.v" -view Simulation
 xfile add "src/tb_branchpredict.v" -view Simulation
 xfile add "src/tb_cache.v" -view Simulation

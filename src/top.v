@@ -1,7 +1,7 @@
 //==================================================
 // 顶层模块 - TEC-PLUS 核心板
 // CPU 通过内存映射 IO (MMIO) 自己驱动 UART 和 LED,
-// 并运行一个回合制地牢游戏 (程序见 asm/dungeon.s)。
+// 并运行一个 8x8 手写数字推理 demo (程序见 asm/cnn_digit.s)。
 //
 // 数据总线地址空间 (字节地址):
 //   0x000 - 0x3FF : 数据 RAM  (256 字, 字节写)
@@ -188,7 +188,7 @@ module top #(
             data_mem_b2[j] = 8'h0;
             data_mem_b3[j] = 8'h0;
         end
-`include "src/dungeon_prog.vh"
+`include "src/cnn_prog.vh"
     end
 
     //----------------------------------------------

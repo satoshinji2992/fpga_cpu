@@ -57,7 +57,7 @@
     <file xil_pn:name="src/tb_pipeline_core.v" xil_pn:type="FILE_VERILOG">
       <association xil_pn:name="BehavioralSimulation" xil_pn:seqID="2"/>
     </file>
-    <file xil_pn:name="src/tb_dungeon.v" xil_pn:type="FILE_VERILOG">
+    <file xil_pn:name="src/tb_cnn.v" xil_pn:type="FILE_VERILOG">
       <association xil_pn:name="BehavioralSimulation" xil_pn:seqID="2"/>
     </file>
     <file xil_pn:name="src/top.ucf" xil_pn:type="FILE_UCF">
