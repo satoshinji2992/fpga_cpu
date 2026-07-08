@@ -1,16 +1,36 @@
-#==============================================
-# ISE项目更新脚本
-# 用于将CPU模块添加到现有ISE项目
-#==============================================project new xilinx.xise -dir "c:/code/fpga/xilinx"# 设置项目属性
-project set "Device Family" "Spartan6"project set "Device" "xc6slx9"project set "Package" "ftg256"
-project set "Speed Grade" "-2"project set "Top-Level Source Type" "HDL"project set "Synthesis Tool" "XST (Verilog)"
-project set "Preferred Language" "Verilog"# 添加源文件
-xfile add "cpu_core.v"xfile add "alu.v"xfile add "regfile.v"
-xfile add "multiplier.v"# 添加测试文件（仅仿真）xfile add "tb_cpu_core.v" -view simulation# 保存项目project save
-#==============================================
-# 综合脚本
-#==============================================project set "Top Module" "riscv_core"process run "Synthesize"#==============================================
-# 生成综合报告
-#==============================================# 运行此脚本后，可以在ISE中查看：
-# - 综合报告（资源使用情况）
-# - RTL原理图# - 时序报告
+# Rebuild/update the ISE project source list for the current CPU dungeon design.
+# Run from the repository root in ISE Tcl console if Project Navigator loses
+# source associations.
+
+project open xilinx.xise
+
+# Implementation sources
+xfile add "src/top.v"
+xfile add "src/riscv_pipeline_core.v"
+xfile add "src/icache_direct_mapped.v"
+xfile add "src/uart_rx.v"
+xfile add "src/uart_tx.v"
+xfile add "src/top.ucf"
+
+# Standalone/reference sources
+xfile add "src/cpu_core.v"
+xfile add "src/alu.v"
+xfile add "src/regfile.v"
+xfile add "src/multiplier.v"
+xfile add "src/icache_2way.v"
+
+# Simulation sources
+xfile add "src/tb_cpu_core.v" -view Simulation
+xfile add "src/tb_pipeline_core.v" -view Simulation
+xfile add "src/tb_all_features.v" -view Simulation
+xfile add "src/tb_dungeon.v" -view Simulation
+xfile add "src/tb_loaduse.v" -view Simulation
+xfile add "src/tb_branchpredict.v" -view Simulation
+xfile add "src/tb_cache.v" -view Simulation
+xfile add "src/tb_muldiv.v" -view Simulation
+xfile add "src/tb_custom.v" -view Simulation
+xfile add "src/tb_csr.v" -view Simulation
+xfile add "src/tb_demo.v" -view Simulation
+
+project set "Top Module" "top"
+project save

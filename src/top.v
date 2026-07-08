@@ -1,8 +1,21 @@
 //==================================================
-// 顶层模块 - TEC-PLUS 核心板独立运行版
-// 功能: CPU执行固化测试程序, 通过核心板4个LED显示验证结果
+// 顶层模块 - TEC-PLUS 核心板
+// CPU 通过内存映射 IO (MMIO) 自己驱动 UART 和 LED,
+// 并运行一个回合制地牢游戏 (程序见 asm/dungeon.s)。
+//
+// 数据总线地址空间 (字节地址):
+//   0x000 - 0x3FF : 数据 RAM  (256 字, 字节写)
+//   0x400 UART_TX : 写一个字节 -> 串口发送
+//   0x404 UART_RX : 读 -> 收到的字节; 写 -> 应答 (清 rx_pending)
+//   0x408 UART_STAT: 读 -> {30'b0, tx_busy, rx_pending}
+//   0x40C LED_OUT  : 写 -> LED[3:0]
+//   0x410 KEY_IN   : 读 -> {28'b0, ~key4, ~key3, ~key2, ~key1} (按下为1)
+// CPU 核心不做任何修改: MMIO 读是组合逻辑, data_ready 恒为 1。
 //==================================================
-module top (
+module top #(
+    parameter CLK_FREQ = 50000000,
+    parameter BAUD     = 115200
+)(
     input  wire clk,        // 核心板50MHz时钟 (T8)
     input  wire rst_n,      // 核心板RESET按键, 低有效 (L3)
     input  wire key1,       // 核心板KEY1, 按下为0
@@ -17,31 +30,17 @@ module top (
     output wire led4        // 核心板LED4
 );
 
-    //----------------------------------------------
-    // 运行计数器, 用于LED状态显示
-    //----------------------------------------------
-    reg [24:0] clk_cnt;
-
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            clk_cnt <= 25'd0;
-        else
-            clk_cnt <= clk_cnt + 25'd1;
-    end
+    localparam CLKS_PER_BIT = CLK_FREQ / BAUD;
 
     //----------------------------------------------
-    // 指令存储器 (ROM, 固化测试程序)
+    // CPU 数据/取指总线
     //----------------------------------------------
-    reg [31:0] instr_mem [0:63];
-
-    // CPU取指信号
     wire [31:0] instr_addr;
     wire [31:0] instr_data;
     wire        instr_valid;
     wire [31:0] instr_rom_addr;
     wire [31:0] instr_rom_data;
 
-    // 数据存储器信号
     wire [31:0] data_addr;
     wire [31:0] data_wdata;
     wire [3:0]  data_be;
@@ -50,11 +49,9 @@ module top (
     wire        data_ready;
 
     wire        halt;
-    wire [31:0] perf_cycle, perf_instret, perf_branch, perf_flush, perf_load_use_stall;
-    wire [31:0] perf_bp_miss, perf_mdu_inst;
 
     //----------------------------------------------
-    // 五级流水线CPU实例
+    // 五级流水线 CPU (perf 计数器输出此处不用, 留空)
     //----------------------------------------------
     riscv_pipeline_core u_cpu (
         .clk        (clk),
@@ -68,20 +65,14 @@ module top (
         .data_we    (data_we),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
-        .halt       (halt),
-        .perf_cycle         (perf_cycle),
-        .perf_instret       (perf_instret),
-        .perf_branch        (perf_branch),
-        .perf_flush         (perf_flush),
-        .perf_load_use_stall(perf_load_use_stall),
-        .perf_bp_miss       (perf_bp_miss),
-        .perf_mdu_inst      (perf_mdu_inst)
+        .halt       (halt)
     );
 
     //----------------------------------------------
-    // 直接映射I-Cache + 指令存储器 (异步读取)
+    // 指令 ROM (异步读) + 直接映射 I-Cache
     //----------------------------------------------
-    assign instr_rom_data = instr_mem[instr_rom_addr[7:2]];
+    reg [31:0] instr_mem [0:511];
+    assign instr_rom_data = instr_mem[instr_rom_addr[10:2]];
 
     icache_direct_mapped #(
         .LINES(8)
@@ -96,129 +87,115 @@ module top (
     );
 
     //----------------------------------------------
-    // 数据存储器 (按字节拆成 4 个字节宽阵列)
-    // 这是 XST 能稳定推断为分布式 RAM 的字节写模板, 避免
-    // 把带字节使能的整字回退成触发器 + 宽多路选择器。
+    // 数据 RAM (256 字, 按字节拆成 4 个字节宽阵列
+    // 以便 XST 稳定推断为分布式 RAM) + MMIO 译码
+    //
+    //   RAM 区域 : data_addr[31:10] == 0  (0x000-0x3FF)
+    //   IO  区域 : 其余 (0x400+)
     //----------------------------------------------
-    reg [7:0] data_mem_b0 [0:63];
-    reg [7:0] data_mem_b1 [0:63];
-    reg [7:0] data_mem_b2 [0:63];
-    reg [7:0] data_mem_b3 [0:63];
-    wire [5:0] data_idx = data_addr[7:2];
-    wire [31:0] mem0;
-    wire [31:0] mem1;
-    wire [31:0] mem2;
-    wire [31:0] mem3;
-    wire        test_pass;
+    reg [7:0] data_mem_b0 [0:255];
+    reg [7:0] data_mem_b1 [0:255];
+    reg [7:0] data_mem_b2 [0:255];
+    reg [7:0] data_mem_b3 [0:255];
+
+    wire        ram_sel  = (data_addr[31:10] == 22'b0);
+    wire [7:0]  data_idx = data_addr[9:2];
+    wire        io_sel   = ~ram_sel;
+    wire [9:0]  io_word  = data_addr[11:2];   // 0x400->0x100, 0x404->0x101 ...
+    wire        is_tx    = io_sel & (io_word == 10'h100); // 0x400
+    wire        is_rx    = io_sel & (io_word == 10'h101); // 0x404
+    wire        is_stat  = io_sel & (io_word == 10'h102); // 0x408
+    wire        is_led   = io_sel & (io_word == 10'h103); // 0x40C
+    wire        is_key   = io_sel & (io_word == 10'h104); // 0x410
 
     always @(posedge clk) begin
-        if (data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
-        if (data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
-        if (data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
-        if (data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
+        if (ram_sel && data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
+        if (ram_sel && data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
+        if (ram_sel && data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
+        if (ram_sel && data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
     end
 
-    assign data_rdata = {data_mem_b3[data_idx], data_mem_b2[data_idx],
-                         data_mem_b1[data_idx], data_mem_b0[data_idx]};
-    assign data_ready = 1'b1;
-    assign mem0 = {data_mem_b3[6'd0], data_mem_b2[6'd0], data_mem_b1[6'd0], data_mem_b0[6'd0]};
-    assign mem1 = {data_mem_b3[6'd1], data_mem_b2[6'd1], data_mem_b1[6'd1], data_mem_b0[6'd1]};
-    assign mem2 = {data_mem_b3[6'd2], data_mem_b2[6'd2], data_mem_b1[6'd2], data_mem_b0[6'd2]};
-    assign mem3 = {data_mem_b3[6'd3], data_mem_b2[6'd3], data_mem_b1[6'd3], data_mem_b0[6'd3]};
-    assign test_pass = halt &&
-                       (mem0 == 32'd42) &&    // MUL 7*6
-                       (mem1 == 32'd55) &&    // sum 1+..+10
-                       (mem2 == 32'd8);       // POPCOUNT(0xFF)
+    wire [31:0] ram_rdata = {data_mem_b3[data_idx], data_mem_b2[data_idx],
+                             data_mem_b1[data_idx], data_mem_b0[data_idx]};
 
     //----------------------------------------------
-    // 串口交互Shell (115200 8N1)
+    // UART 收发器 (直接挂在 MMIO 上)
     //----------------------------------------------
-    serial_shell #(
-        .CLK_FREQ(50000000),
-        .BAUD    (115200)
-    ) u_shell (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .rx        (uart_rx),
-        .tx        (uart_tx),
-        .halt      (halt),
-        .test_pass (test_pass),
-        .mem0      (mem0),
-        .mem1      (mem1),
-        .mem2      (mem2),
-        .mem3      (mem3),
-        .perf_cycle   (perf_cycle),
-        .perf_instret (perf_instret),
-        .perf_branch  (perf_branch),
-        .perf_flush   (perf_flush),
-        .perf_bp_miss (perf_bp_miss)
+    wire [7:0] rx_data;
+    wire       rx_valid;
+    reg  [7:0] tx_data;
+    reg        tx_start;
+    wire       tx_busy;
+    reg [7:0]  rx_byte;
+    reg        rx_pending;
+    reg [3:0]  led_out;
+
+    uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_rx (
+        .clk(clk), .rst_n(rst_n), .rx(uart_rx), .data(rx_data), .valid(rx_valid)
+    );
+    uart_tx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_tx (
+        .clk(clk), .rst_n(rst_n), .start(tx_start), .data(tx_data),
+        .tx(uart_tx), .busy(tx_busy)
     );
 
+    // MMIO 寄存器: rx 锁存 (valid 是单拍脉冲, 需要粘住的 rx_pending);
+    // CPU 写 UART_RX 作为应答, 清除 rx_pending (无需读选通, 不用改 CPU 核)。
+    // 写 UART_TX 启动发送; 写 LED_OUT 驱动 LED。
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rx_byte    <= 8'd0;
+            rx_pending <= 1'b0;
+            tx_data    <= 8'd0;
+            tx_start   <= 1'b0;
+            led_out    <= 4'd0;
+        end else begin
+            tx_start <= 1'b0;                       // 默认单拍脉冲
+            if (rx_valid) begin
+                rx_byte    <= rx_data;
+                rx_pending <= 1'b1;
+            end
+            if (is_rx && data_we) begin             // 写 UART_RX = 应答
+                rx_pending <= 1'b0;
+            end
+            if (is_tx && data_we) begin
+                tx_data  <= data_wdata[7:0];
+                tx_start <= 1'b1;
+            end
+            if (is_led && data_we) begin
+                led_out <= data_wdata[3:0];
+            end
+        end
+    end
+
+    wire [31:0] io_rdata =
+        is_rx   ? {24'b0, rx_byte} :
+        is_stat ? {30'b0, tx_busy, rx_pending} :
+        is_key  ? {28'b0, ~key4, ~key3, ~key2, ~key1} :
+                  32'b0;
+
+    assign data_rdata = ram_sel ? ram_rdata : io_rdata;
+    assign data_ready = 1'b1;
+
     //----------------------------------------------
-    // 固化测试程序到指令ROM
-    // 结束后:
-    //   Mem[0] = 32'h3480_1200, 验证SB/LB/LBU
-    //   Mem[1] = 32'h0000_FFFE, 验证SH/LH/LHU
-    //   Mem[2] = 32'd2,         验证BEQ/BGE跳转
-    //----------------------------------------------
+    // 指令 ROM 初始化: NOP 填充 + 数据 RAM 清零 + 游戏程序
+//----------------------------------------------
     integer j;
     initial begin
-        for (j = 0; j < 64; j = j + 1) begin
-            instr_mem[j]   = 32'h00000013; // NOP
+        for (j = 0; j < 512; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
+        for (j = 0; j < 256; j = j + 1) begin
             data_mem_b0[j] = 8'h0;
             data_mem_b1[j] = 8'h0;
             data_mem_b2[j] = 8'h0;
             data_mem_b3[j] = 8'h0;
         end
-
-        // 综合演示程序: 一次跑通 RV32M 乘法 + 计数循环(分支预测) +
-        // POPCOUNT(自定义指令)。结果: mem0=MUL, mem1=sum, mem2=POPCOUNT.
-        instr_mem[0]  = 32'h00700093; // ADDI x1, x0, 7
-        instr_mem[1]  = 32'h00600113; // ADDI x2, x0, 6
-        instr_mem[2]  = 32'h022081B3; // MUL  x3, x1, x2      -> 42
-        instr_mem[3]  = 32'h00302023; // SW   x3, 0(x0)       -> mem0 = 42
-        instr_mem[4]  = 32'h00000213; // ADDI x4, x0, 0       (sum)
-        instr_mem[5]  = 32'h00100293; // ADDI x5, x0, 1       (i)
-        instr_mem[6]  = 32'h00B00313; // ADDI x6, x0, 11      (bound)
-        instr_mem[7]  = 32'h00520233; // ADD  x4, x4, x5      (loop:)
-        instr_mem[8]  = 32'h00128293; // ADDI x5, x5, 1
-        instr_mem[9]  = 32'hFE62CCE3; // BLT  x5, x6, -8      (-> loop)
-        instr_mem[10] = 32'h00402223; // SW   x4, 4(x0)       -> mem1 = 55
-        instr_mem[11] = 32'h0FF00393; // ADDI x7, x0, 0xFF
-        instr_mem[12] = 32'h0003940B; // POPCOUNT x8, x7      -> 8
-        instr_mem[13] = 32'h00802423; // SW   x8, 8(x0)       -> mem2 = 8
-        instr_mem[14] = 32'hC00024F3; // RDCYCLE  x9         -> x9 = cycle (CSR read)
-        instr_mem[15] = 32'h00902623; // SW       x9, 12(x0) -> Mem[3] = cycle
-        instr_mem[16] = 32'h00000073; // ECALL (halt, 异常)
+`include "src/dungeon_prog.vh"
     end
 
     //----------------------------------------------
-    // 核心板LED输出
-    // 默认: 4个LED全亮表示测试通过
-    // KEY1: Mem[0][3:0]=0xA  (MUL 7*6=42)
-    // KEY2: Mem[1][3:0]=0x7  (sum 1+..+10=55)
-    // KEY3: Mem[2][3:0]=0x8  (POPCOUNT 0xFF=8)
-    // KEY4: halt 状态 (停机=0xF)
-    //----------------------------------------------
-    localparam LED_ACTIVE_LOW = 1'b0;
-
-    reg [3:0] led_data;
-    wire [3:0] led_drive;
-
-    always @(*) begin
-        if (!key1)
-            led_data = mem0[3:0];
-        else if (!key2)
-            led_data = mem1[3:0];
-        else if (!key3)
-            led_data = mem2[3:0];
-        else if (!key4)
-            led_data = halt ? 4'hF : 4'h0;
-        else
-            led_data = test_pass ? 4'hF : {halt, clk_cnt[24], 1'b1, 1'b0};
-    end
-
-    assign led_drive = LED_ACTIVE_LOW ? ~led_data : led_data;
+    // LED 输出 (由 CPU 通过 LED_OUT MMIO 写入控制)
+//----------------------------------------------
+    localparam LED_ACTIVE_LOW = 1'b0;   // TEC-PLUS LED 通常高电平点亮
+    wire [3:0] led_drive = LED_ACTIVE_LOW ? ~led_out : led_out;
     assign led1 = led_drive[0];
     assign led2 = led_drive[1];
     assign led3 = led_drive[2];

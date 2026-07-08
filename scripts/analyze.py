@@ -34,7 +34,7 @@ def find_tools():
 
 def run_tb(iv, vv, srcs, label):
     out = os.path.join(tempfile.gettempdir(), "fpgacpu_%s.out" % label)
-    cp = subprocess.run([iv, "-o", out] + [os.path.join(SRC, s) for s in srcs],
+    cp = subprocess.run([iv, "-I", SRC, "-o", out] + [os.path.join(SRC, s) for s in srcs],
                         capture_output=True, text=True)
     if cp.returncode != 0 or not os.path.exists(out):
         return "", "compile fail: " + (cp.stderr or cp.stdout)[-400:]
@@ -66,6 +66,8 @@ def main():
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
+        ("dungeon",       ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "uart_rx.v", "uart_tx.v", "tb_dungeon.v"]),
     ]
     res = {}
     for label, srcs in TBS:
@@ -164,7 +166,7 @@ def main():
 
     print("\n" + "=" * 66)
     print(" 回归: %d/%d testbench 通过" % (npass, len(TBS)))
-    print(" PPA (面积/功耗/Fmax) 需在本地 ISE 14.7 综合后填入 doc/PPA_ANALYSIS.md")
+    print(" PPA (面积/功耗/Fmax) 需在本地 ISE 14.7 综合后填入报告或 README")
     print("=" * 66)
 
 if __name__ == "__main__":
