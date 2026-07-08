@@ -14,7 +14,8 @@
 //==================================================
 module top #(
     parameter CLK_FREQ = 50000000,
-    parameter BAUD     = 115200
+    parameter BAUD     = 115200,
+    parameter USE_2WAY_ICACHE = 1
 )(
     input  wire clk,        // 核心板50MHz时钟 (T8)
     input  wire rst_n,      // 核心板RESET按键, 低有效 (L3)
@@ -40,6 +41,8 @@ module top #(
     wire        instr_valid;
     wire [31:0] instr_rom_addr;
     wire [31:0] instr_rom_data;
+    wire [31:0] icache_hit_count;
+    wire [31:0] icache_miss_count;
 
     wire [31:0] data_addr;
     wire [31:0] data_wdata;
@@ -74,17 +77,37 @@ module top #(
     reg [31:0] instr_mem [0:1023];
     assign instr_rom_data = instr_mem[instr_rom_addr[11:2]];
 
-    icache_direct_mapped #(
-        .LINES(8)
-    ) u_icache (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .cpu_addr   (instr_addr),
-        .mem_addr   (instr_rom_addr),
-        .mem_data   (instr_rom_data),
-        .cpu_data   (instr_data),
-        .cpu_valid  (instr_valid)
-    );
+    generate
+        if (USE_2WAY_ICACHE) begin : gen_icache_2way
+            icache_2way #(
+                .LINES(8)
+            ) u_icache (
+                .clk        (clk),
+                .rst_n      (rst_n),
+                .cpu_addr   (instr_addr),
+                .mem_addr   (instr_rom_addr),
+                .mem_data   (instr_rom_data),
+                .cpu_data   (instr_data),
+                .cpu_valid  (instr_valid),
+                .hit_count  (icache_hit_count),
+                .miss_count (icache_miss_count)
+            );
+        end else begin : gen_icache_direct
+            icache_direct_mapped #(
+                .LINES(8)
+            ) u_icache (
+                .clk        (clk),
+                .rst_n      (rst_n),
+                .cpu_addr   (instr_addr),
+                .mem_addr   (instr_rom_addr),
+                .mem_data   (instr_rom_data),
+                .cpu_data   (instr_data),
+                .cpu_valid  (instr_valid)
+            );
+            assign icache_hit_count  = 32'd0;
+            assign icache_miss_count = 32'd0;
+        end
+    endgenerate
 
     //----------------------------------------------
     // 数据 RAM (1024 字, 按字节拆成 4 个字节宽阵列

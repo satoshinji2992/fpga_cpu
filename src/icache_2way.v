@@ -56,6 +56,15 @@ module icache_2way #(
         if (!rst_n) begin
             hit_count  <= 32'd0;
             miss_count <= 32'd0;
+            for (s = 0; s < SETS; s = s + 1) begin
+                valid0[s] <= 1'b0;
+                valid1[s] <= 1'b0;
+                lru[s]    <= 1'b0;
+                tag0[s]   <= {TAG_BITS{1'b0}};
+                tag1[s]   <= {TAG_BITS{1'b0}};
+                data0[s]  <= 32'b0;
+                data1[s]  <= 32'b0;
+            end
         end else begin
             if (hit) begin
                 hit_count <= hit_count + 32'd1;

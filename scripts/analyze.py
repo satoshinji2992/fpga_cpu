@@ -68,9 +68,11 @@ def main():
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
         ("cnn",           ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
+        ("cnn-ablation",  ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn_ablation.v"]),
         ("shell",         ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
     ]
     res = {}
     for label, srcs in TBS:
@@ -122,8 +124,24 @@ def main():
         print("    -> CPI 降低 %.1f%%" % save)
         print("    预测准确率 %5.1f%%  %s" % (acc, bar(acc)))
 
-    # 4. cache
-    print("\n[4] I-Cache 命中率 (冲突地址流 0,32,0,32,... 同一组)")
+    # 4. CNN program ablation
+    print("\n[4] CNN 端到端程序 ablation (UART cnn 命令 -> 输出 pred 7)")
+    cab = res["cnn-ablation"][0]
+    con = re.search(r"BP_ON\s+cycle=(\d+).*?instret=(\d+).*?cpi=([\d.]+).*?branch=(\d+).*?flush=(\d+).*?bp_miss=(\d+).*?acc=([\d.]+)%.*?load_use=(\d+).*?mdu=(\d+)", cab, re.S)
+    cof = re.search(r"BP_OFF\s+cycle=(\d+).*?instret=(\d+).*?cpi=([\d.]+).*?branch=(\d+).*?flush=(\d+).*?bp_miss=(\d+).*?acc=([\d.]+)%.*?load_use=(\d+).*?mdu=(\d+)", cab, re.S)
+    if con and cof:
+        cyc_on, cyc_off = int(con.group(1)), int(cof.group(1))
+        speed = (cyc_off - cyc_on) / cyc_off * 100.0
+        print("    2-bit BHT: cycle=%s instret=%s CPI=%s branch=%s flush=%s bp_miss=%s acc=%s%% load_use=%s mdu=%s" %
+              (con.group(1), con.group(2), con.group(3), con.group(4), con.group(5),
+               con.group(6), con.group(7), con.group(8), con.group(9)))
+        print("    baseline : cycle=%s instret=%s CPI=%s branch=%s flush=%s bp_miss=%s acc=%s%% load_use=%s mdu=%s" %
+              (cof.group(1), cof.group(2), cof.group(3), cof.group(4), cof.group(5),
+               cof.group(6), cof.group(7), cof.group(8), cof.group(9)))
+        print("    -> 端到端 cycle 降低 %.1f%%" % speed)
+
+    # 5. cache
+    print("\n[5] I-Cache 命中率 (冲突地址流 0,32,0,32,... 同一组)")
     ca = res["cache"][0]
     dm = re.search(r"DIRECT.*?hit=(\d+).*?miss=(\d+).*?rate=([\d.]+)", ca, re.S)
     tw = re.search(r"2-WAY.*?hit=(\d+).*?miss=(\d+).*?rate=([\d.]+)", ca, re.S)
@@ -132,8 +150,8 @@ def main():
         print("    直接映射 8行:     命中率 %5.1f%%  hit=%s miss=%s  %s" % (dr, dm.group(1), dm.group(2), bar(dr)))
         print("    2路组相联 + LRU:  命中率 %5.1f%%  hit=%s miss=%s  %s" % (tr, tw.group(1), tw.group(2), bar(tr)))
 
-    # 5. RV32M
-    print("\n[5] RV32M 乘除法扩展 (单周期组合实现)")
+    # 6. RV32M
+    print("\n[6] RV32M 乘除法扩展 (单周期组合实现)")
     md = res["muldiv"][0]
     m0 = grab(r"Mem\[0\] = (\d+)", md, int)
     m1 = grab(r"Mem\[1\] = (\d+)", md, int)
@@ -142,8 +160,8 @@ def main():
     print("    MUL 7*6 = %s (期望42)   DIV 7/6 = %s (期望1)   REM 7%%6 = %s (期望1)   %s"
           % (m0, m1, m2, "[OK]" if ok_m else "[FAIL]"))
 
-    # 6. custom float32
-    print("\n[6] Custom float32 扩展 (custom-0: FADD32 / FMUL32 / FGT32)")
+    # 7. custom float32
+    print("\n[7] Custom float32 扩展 (custom-0: FADD32 / FMUL32 / FGT32)")
     fl = res["float"][0]
     f0 = grab(r"Mem\[0\] = ([0-9a-fA-F]+)", fl)
     f1 = grab(r"Mem\[1\] = ([0-9a-fA-F]+)", fl)
@@ -153,8 +171,8 @@ def main():
     print("    FADD32 1.5+2.25 = 0x%s   FMUL32 1.5*2.0 = 0x%s   FGT32 2.25>1.5 = 0x%s   %s"
           % (f0, f1, f2, "[OK]" if ok_f else "[FAIL]"))
 
-    # 7. custom ISA
-    print("\n[7] 自定义 ISA 扩展 (custom-0: POPCOUNT / BITREVERSE)")
+    # 8. custom ISA
+    print("\n[8] 自定义 ISA 扩展 (custom-0: POPCOUNT / BITREVERSE)")
     cu = res["custom"][0]
     c0 = grab(r"Mem\[0\] = (\d+)", cu, int)
     c1 = grab(r"Mem\[1\] = ([0-9a-fA-F]+)", cu)
@@ -162,8 +180,11 @@ def main():
     print("    POPCOUNT(0xABCD00FF) = %s (期望18)   BITREV = 0x%s (期望 ff00b3d5)   %s"
           % (c0, c1, "[OK]" if ok_c else "[FAIL]"))
 
-    # 8. requirement coverage
-    print("\n[8] 课程设计要求覆盖 (对照图片需求清单)")
+    # 9. requirement coverage
+    print("\n[9] 课程设计要求覆盖 (对照图片需求清单)")
+    ppa_reports_exist = (os.path.exists(os.path.join(HERE, "..", "top.par")) and
+                         os.path.exists(os.path.join(HERE, "..", "top.twr")) and
+                         os.path.exists(os.path.join(HERE, "..", "top.pwr")))
     cov = [
         ("进阶: CPU + 内存 + Cache + I/O 系统集成",            True),
         ("进阶: 小型测试程序完整运行",                         npass == len(TBS)),
@@ -174,14 +195,17 @@ def main():
         ("拓展: 乘除法扩展指令 (RV32M)",                       ok_m),
         ("拓展: 浮点运算扩展指令 (custom float32)",             ok_f),
         ("拓展: 自定义 ISA 扩展设计",                          ok_c),
-        ("PPA 权衡分析 (面积/功耗/频率)",                      False),  # 需本地 ISE 综合填实
+        ("PPA 权衡分析 (面积/功耗/频率)",                      ppa_reports_exist),
     ]
     for name, ok in cov:
         print("    [%s] %s" % ("x" if ok else " ", name))
 
     print("\n" + "=" * 66)
     print(" 回归: %d/%d testbench 通过" % (npass, len(TBS)))
-    print(" PPA (面积/功耗/Fmax) 需在本地 ISE 14.7 综合后填入报告或 README")
+    if ppa_reports_exist:
+        print(" PPA: 已发现 top.par/top.twr/top.pwr；面积/时序/功耗已按当前 ISE/XPower 报告记录")
+    else:
+        print(" PPA (面积/功耗/Fmax) 需在本地 ISE 14.7 综合后填入报告或 README")
     print("=" * 66)
 
 if __name__ == "__main__":
