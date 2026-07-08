@@ -123,15 +123,15 @@ module serial_shell #(
             case (r)
                 RESP_BANNER:  resp_len = 6'd34; // "\r\nRV32I pipe+icache shell\r\ncpu> "
                 RESP_HELP:    resp_len = 6'd32; // "h s 0 1 2 3 g a/d/x n p q\r\ncpu> "
-                RESP_STATUS:  resp_len = 6'd13; // "PASS halt=1\r\n" or "FAIL halt=0\r\n"
-                RESP_MEM:     resp_len = 6'd17; // "memX=0x12345678\r\n"
+                RESP_STATUS:  resp_len = 6'd18; // "PASS halt=1\r\ncpu> " or "FAIL halt=0\r\ncpu> "
+                RESP_MEM:     resp_len = 6'd22; // "memX=0x12345678\r\ncpu> "
                 RESP_PONG:    resp_len = 6'd13; // "P Bxy Pp Oo\r\n"
-                RESP_RESET:   resp_len = 6'd12; // "pong reset\r\n"
-                RESP_OVER:    resp_len = 6'd37; // "pong over\r\nfreq=50MHz CPI=1 T=50MIPS\r\n"
-                RESP_METRICS: resp_len = 6'd26; // "freq=50MHz CPI=1 T=50MIPS\r\n"
+                RESP_RESET:   resp_len = 6'd17; // "pong reset\r\ncpu> "
+                RESP_OVER:    resp_len = 6'd42; // "pong over\r\nfreq=50MHz CPI=1 T=50MIPS\r\ncpu> "
+                RESP_METRICS: resp_len = 6'd31; // "freq=50MHz CPI=1 T=50MIPS\r\ncpu> "
                 RESP_BAD:     resp_len = 6'd7;  // "?\r\ncpu> "
                 RESP_PROMPT:  resp_len = 6'd5;  // "cpu> "
-                RESP_PERF:    resp_len = 6'd38; // "c=8h i=8h b=2h f=2h m=2h\r\n"
+                RESP_PERF:    resp_len = 6'd43; // "c=8h i=8h b=2h f=2h m=2h\r\ncpu> "
                 default:      resp_len = 6'd0;
             endcase
         end
@@ -207,9 +207,9 @@ module serial_shell #(
             case (r)
                 RESP_BANNER:  response_char = banner_rom[p];
                 RESP_HELP:    response_char = help_rom[p];
-                RESP_RESET:   response_char = reset_rom[p];
-                RESP_OVER:    response_char = over_rom[p];
-                RESP_METRICS: response_char = metrics_rom[p];
+                RESP_RESET:   response_char = (p < 6'd12) ? reset_rom[p] : prompt_rom[p - 6'd12];
+                RESP_OVER:    response_char = (p < 6'd37) ? over_rom[p] : prompt_rom[p - 6'd37];
+                RESP_METRICS: response_char = (p < 6'd26) ? metrics_rom[p] : prompt_rom[p - 6'd26];
                 RESP_BAD:     response_char = bad_rom[p];
                 RESP_PROMPT:  response_char = prompt_rom[p];
                 RESP_PERF: begin
@@ -253,6 +253,11 @@ module serial_shell #(
                         6'd35: response_char = hex_char(perf_bp_miss[3:0]);
                         6'd36: response_char = 8'h0d;
                         6'd37: response_char = 8'h0a;
+                        6'd38: response_char = prompt_rom[0];
+                        6'd39: response_char = prompt_rom[1];
+                        6'd40: response_char = prompt_rom[2];
+                        6'd41: response_char = prompt_rom[3];
+                        6'd42: response_char = prompt_rom[4];
                         default: response_char = 8'h20;
                     endcase
                 end
@@ -262,7 +267,8 @@ module serial_shell #(
                             0: response_char="P"; 1: response_char="A"; 2: response_char="S"; 3: response_char="S";
                             4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
                             8: response_char="t"; 9: response_char="="; 10: response_char="1"; 11: response_char=8'h0d;
-                            12: response_char=8'h0a; 13: response_char=" ";
+                            12: response_char=8'h0a; 13: response_char=prompt_rom[0]; 14: response_char=prompt_rom[1];
+                            15: response_char=prompt_rom[2]; 16: response_char=prompt_rom[3]; 17: response_char=prompt_rom[4];
                             default: response_char=8'h20;
                         endcase
                     end else begin
@@ -270,7 +276,8 @@ module serial_shell #(
                             0: response_char="F"; 1: response_char="A"; 2: response_char="I"; 3: response_char="L";
                             4: response_char=" "; 5: response_char="h"; 6: response_char="a"; 7: response_char="l";
                             8: response_char="t"; 9: response_char="="; 10: response_char=halt ? "1" : "0"; 11: response_char=8'h0d;
-                            12: response_char=8'h0a; 13: response_char=" ";
+                            12: response_char=8'h0a; 13: response_char=prompt_rom[0]; 14: response_char=prompt_rom[1];
+                            15: response_char=prompt_rom[2]; 16: response_char=prompt_rom[3]; 17: response_char=prompt_rom[4];
                             default: response_char=8'h20;
                         endcase
                     end
@@ -289,6 +296,11 @@ module serial_shell #(
                         14: response_char=hex_char(selected_mem[3:0]);
                         15: response_char=8'h0d;
                         16: response_char=8'h0a;
+                        17: response_char=prompt_rom[0];
+                        18: response_char=prompt_rom[1];
+                        19: response_char=prompt_rom[2];
+                        20: response_char=prompt_rom[3];
+                        21: response_char=prompt_rom[4];
                         default: response_char=8'h20;
                     endcase
                 end
