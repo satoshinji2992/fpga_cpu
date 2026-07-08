@@ -221,10 +221,12 @@ s    status
 0    print Mem[0]
 1    print Mem[1]
 2    print Mem[2]
+3    print Mem[3]
 g    show Pong state
 a/d  move paddle and step
 x    step ball
 n    reset Pong
+p    print performance counters
 q    quit Python client
 ```
 

@@ -8,7 +8,7 @@
 // Commands:
 //   h - help
 //   s - CPU status
-//   0/1/2 - print Mem[0..2]
+//   0/1/2/3 - print Mem[0..3]
 //   g - get Pong state
 //   a/l - move paddle left and step
 //   d/r - move paddle right and step
@@ -122,8 +122,8 @@ module serial_shell #(
         begin
             case (r)
                 RESP_BANNER:  resp_len = 6'd34; // "\r\nRV32I pipe+icache shell\r\ncpu> "
-                RESP_HELP:    resp_len = 6'd47; // "h s 0 1 2 g a/d/x n p; q quits host\r\ncpu> "
-                RESP_STATUS:  resp_len = 6'd14; // "PASS halt=1\r\n" or "FAIL halt=0\r\n"
+                RESP_HELP:    resp_len = 6'd32; // "h s 0 1 2 3 g a/d/x n p q\r\ncpu> "
+                RESP_STATUS:  resp_len = 6'd13; // "PASS halt=1\r\n" or "FAIL halt=0\r\n"
                 RESP_MEM:     resp_len = 6'd17; // "memX=0x12345678\r\n"
                 RESP_PONG:    resp_len = 6'd13; // "P Bxy Pp Oo\r\n"
                 RESP_RESET:   resp_len = 6'd12; // "pong reset\r\n"
@@ -142,7 +142,7 @@ module serial_shell #(
     // comparator tree for the old case-in-function. Only the runtime-dependent
     // responses (STATUS/MEM/PONG) stay as inline logic in response_char below.
     reg [7:0] banner_rom  [0:33];
-    reg [7:0] help_rom    [0:46];
+    reg [7:0] help_rom    [0:31];
     reg [7:0] reset_rom   [0:11];
     reg [7:0] over_rom    [0:36];
     reg [7:0] metrics_rom [0:25];
@@ -160,19 +160,15 @@ module serial_shell #(
         banner_rom[24]="l";  banner_rom[25]=8'h0d;banner_rom[26]=8'h0a;banner_rom[27]="c";
         banner_rom[28]="p";  banner_rom[29]="u";  banner_rom[30]=">"; banner_rom[31]=" ";
         banner_rom[32]=" ";  banner_rom[33]=" ";
-        // RESP_HELP: "h s 0 1 2 g a/d/x n p; q quits host\r\ncpu>      "
+        // RESP_HELP: "h s 0 1 2 3 g a/d/x n p q\r\ncpu> "
         help_rom[0]="h";  help_rom[1]=" ";  help_rom[2]="s";  help_rom[3]=" ";
         help_rom[4]="0";  help_rom[5]=" ";  help_rom[6]="1";  help_rom[7]=" ";
-        help_rom[8]="2";  help_rom[9]=" ";  help_rom[10]="g"; help_rom[11]=" ";
-        help_rom[12]="a"; help_rom[13]="/"; help_rom[14]="d"; help_rom[15]="/";
-        help_rom[16]="x"; help_rom[17]=" "; help_rom[18]="n"; help_rom[19]=" ";
-        help_rom[20]="p"; help_rom[21]=";"; help_rom[22]=" "; help_rom[23]="q";
-        help_rom[24]=" "; help_rom[25]="q"; help_rom[26]="u"; help_rom[27]="i";
-        help_rom[28]="t"; help_rom[29]="s"; help_rom[30]=" "; help_rom[31]="h";
-        help_rom[32]="o"; help_rom[33]="s"; help_rom[34]="t"; help_rom[35]=8'h0d;
-        help_rom[36]=8'h0a;help_rom[37]="c";help_rom[38]="p"; help_rom[39]="u";
-        help_rom[40]=">"; help_rom[41]=" "; help_rom[42]=" "; help_rom[43]=" ";
-        help_rom[44]=" "; help_rom[45]=" "; help_rom[46]=" ";
+        help_rom[8]="2";  help_rom[9]=" ";  help_rom[10]="3"; help_rom[11]=" ";
+        help_rom[12]="g"; help_rom[13]=" "; help_rom[14]="a"; help_rom[15]="/";
+        help_rom[16]="d"; help_rom[17]="/"; help_rom[18]="x"; help_rom[19]=" ";
+        help_rom[20]="n"; help_rom[21]=" "; help_rom[22]="p"; help_rom[23]=" ";
+        help_rom[24]="q"; help_rom[25]=8'h0d;help_rom[26]=8'h0a;help_rom[27]="c";
+        help_rom[28]="p"; help_rom[29]="u"; help_rom[30]=">"; help_rom[31]=" ";
         // RESP_RESET: "pong reset\r\n"
         reset_rom[0]="p";  reset_rom[1]="o";  reset_rom[2]="n";  reset_rom[3]="g";
         reset_rom[4]=" ";  reset_rom[5]="r";  reset_rom[6]="e";  reset_rom[7]="s";
@@ -339,6 +335,7 @@ module serial_shell #(
                         case (rx_data)
                             "h", "H": begin resp <= RESP_HELP;   pos <= 6'd0; state <= ST_SEND; end
                             "s", "S": begin resp <= RESP_STATUS; pos <= 6'd0; state <= ST_SEND; end
+                            8'h0d, 8'h0a: begin state <= ST_IDLE; end
                             "0": begin selected_mem <= mem0; mem_id <= 2'd0; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
                             "1": begin selected_mem <= mem1; mem_id <= 2'd1; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end
                             "2": begin selected_mem <= mem2; mem_id <= 2'd2; resp <= RESP_MEM; pos <= 6'd0; state <= ST_SEND; end

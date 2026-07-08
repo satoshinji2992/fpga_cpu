@@ -38,7 +38,7 @@ def interactive(args: argparse.Namespace) -> int:
     thread.start()
 
     print(f"Connected to {args.port} at {args.baud} baud.")
-    print("Commands: h help, s status, 0/1/2 read memory, q quit.")
+    print("Commands: h help, s status, 0/1/2/3 read memory, p perf, q quit.")
     time.sleep(0.2)
 
     try:
@@ -46,10 +46,8 @@ def interactive(args: argparse.Namespace) -> int:
             line = input()
             if line.strip().lower() in ("q", "quit", "exit"):
                 break
-            if not line:
-                ser.write(b"\r")
-            else:
-                ser.write(line[0].encode("ascii", errors="ignore") + b"\r")
+            if line:
+                ser.write(line[0].encode("ascii", errors="ignore"))
     except KeyboardInterrupt:
         pass
     finally:
@@ -106,20 +104,20 @@ def pong_mode(args: argparse.Namespace) -> int:
     print(f"Connected to {args.port} at {args.baud} baud.")
     print("Pong mode: A/D move, Space step, n reset, g redraw, p metrics, q quit.")
     time.sleep(0.2)
-    ser.write(b"g\r")
+    ser.write(b"g")
 
     keymap = {
-        "a": b"a\r",
-        "A": b"a\r",
-        "d": b"r\r",
-        "D": b"r\r",
-        " ": b"x\r",
-        "n": b"n\r",
-        "N": b"n\r",
-        "g": b"g\r",
-        "G": b"g\r",
-        "p": b"p\r",
-        "P": b"p\r",
+        "a": b"a",
+        "A": b"a",
+        "d": b"r",
+        "D": b"r",
+        " ": b"x",
+        "n": b"n",
+        "N": b"n",
+        "g": b"g",
+        "G": b"g",
+        "p": b"p",
+        "P": b"p",
     }
 
     try:
