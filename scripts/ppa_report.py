@@ -48,8 +48,19 @@ def main():
 
     min_period = find(r"Minimum period:\s+([0-9.]+ns)", twr)
     fmax = find(r"Maximum frequency:\s+([0-9.]+MHz)", twr)
-    slack = find(r"Worst Case\s+\|\s+Best Case.*?\n\*.*?SETUP\s+\|\s+(-?[0-9.]+ns)", par, flags=re.S)
-    timing_errors = find(r"\*\s+TS_clk.*?SETUP\s+\|\s+-?[0-9.]+ns\|\s+[0-9.]+ns\|\s+([0-9]+)\|", par, flags=re.S)
+    system_period = find(r"TS_sys_clk.*?\n\s+([0-9.]+\s+ns)\s+HIGH", par, flags=re.S)
+    if system_period == "NA":
+        system_period = "40 ns"
+    input_period = find(r"TS_clk.*?\n\s+([0-9.]+\s+ns)\s+H", par, flags=re.S)
+    if input_period == "NA":
+        input_period = "20 ns"
+    setup_slack = find(r"TS_sys_clk.*?SETUP\s+\|\s+(-?[0-9.]+ns)", par, flags=re.S)
+    if setup_slack == "NA":
+        setup_slack = find(r"Slack \(setup path\):\s+(-?[0-9.]+ns)", twr)
+    minperiod_slack = find(r"TS_clk.*?MINPERIOD\s+\|\s+(-?[0-9.]+ns)", par, flags=re.S)
+    timing_errors = find(r"Timing errors:\s+([0-9]+)", twr)
+    timing_score = find(r"Timing Score:\s+([0-9]+)", par)
+    constraints = "met" if "All constraints were met." in par or "All constraints were met." in twr else "not met"
 
     total_power = find(r"Supply Power \(mW\)\s+\|\s+([0-9.]+)", pwr)
     dynamic_power = find(r"Supply Power \(mW\)\s+\|\s+[0-9.]+\s+\|\s+([0-9.]+)", pwr)
@@ -75,11 +86,15 @@ def main():
 
     print("\n| Timing | Value |")
     print("|---|---:|")
-    print("| Target period | 20 ns |")
+    print(f"| System clock period | {system_period} |")
+    print(f"| Input/min-period constraint | {input_period} |")
     print(f"| Best achievable period | {min_period} |")
     print(f"| Maximum frequency | {fmax} |")
-    print(f"| Worst setup slack | {slack} |")
+    print(f"| Worst setup slack | {setup_slack} |")
+    print(f"| Min-period slack | {minperiod_slack} |")
     print(f"| Timing errors | {timing_errors} |")
+    print(f"| Timing score | {timing_score} |")
+    print(f"| Constraints | {constraints} |")
 
     print("\n| Power | Value |")
     print("|---|---:|")

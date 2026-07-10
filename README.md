@@ -20,7 +20,7 @@
 - 分支/跳转冲刷流水线
 - 16 项 2-bit BHT 动态分支预测，可用参数关闭对比 baseline
 - 片上指令 ROM 和片上数据 RAM
-- 8 行直接映射 I-Cache：`src/icache_direct_mapped.v`
+- 8 行 I-Cache：顶层默认 2 路组相联 + LRU，也保留直接映射版本用于对照：`src/icache_2way.v` / `src/icache_direct_mapped.v`
 - LED / KEY / UART memory-mapped I/O
 - 两片 HY57V2562 x16 并行组成 64 MiB x32 SDRAM，支持初始化、刷新、字节掩码和 wait-state
 - UART RX / KEY 机器态外部中断，支持 `mstatus/mie/mtvec/mepc/mcause/mip` 和 `MRET`
@@ -63,8 +63,8 @@
 - 已实现机器态外部中断，但未实现完整异常、嵌套中断和完整特权架构
 - 未实现 MMU / 虚拟内存
 - 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32/FGT32`
-- 当前顶层仍使用直接映射 I-Cache；2 路组相联 cache 主要用于仿真对比
-- PPA 多方案对比需要在 Windows / ISE 14.7 综合后填写真实面积、时序和功耗数据
+- 当前顶层默认使用 2 路组相联 I-Cache + LRU，设置 `USE_2WAY_ICACHE=0` 可切换为直接映射
+- R13 PPA 已由 ISE 14.7/XPower 更新：Occupied Slices 99%、LUT 88%、25 MHz 约束通过、总功耗估计 44.09 mW（Medium confidence）
 
 ## 目录结构
 
@@ -105,7 +105,7 @@ data/
 
 image.txt                 自定义 8x8 数字输入示例
 experiment.md            当前进度、验证结果与待办记录
-计算机组成原理课程设计报告.docx  课程设计报告（PPA 暂保留旧 ISE 数据）
+计算机组成原理课程设计报告.docx  课程设计报告（R13，含最新 PPA、消融实验和配图）
 xilinx.xise              ISE 14.7 工程
 ```
 
@@ -565,4 +565,4 @@ CPU 每帧输出定长二进制包 `A5 44 83 <x_lo> <x_hi> <y> <128 cells>`，Py
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、直接映射 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED、CPU shell、CPU 自主 8x8 数字推理和 CPU Pong demo 进行验证；PPA 多方案对比需要结合 ISE 综合报告进一步补充。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED、CPU shell、CPU 自主 8x8 数字推理和 CPU Pong demo 进行验证；R13 的 PPA、消融实验和时序结果已记录，组合开机自检仍需重新烧录复测。
