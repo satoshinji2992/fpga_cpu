@@ -36,4 +36,4 @@ NET "led4"      LOC = L12 | IOSTANDARD = LVCMOS33;  # LED4
 # 时序约束
 #----------------------------------------------
 NET "clk" TNM_NET = "clk_grp";
-TIMESPEC TS_clk = PERIOD "clk_grp" 20 ns HIGH 50%;
+TIMESPEC TS_clk = PERIOD "clk_grp" 100 ns HIGH 50%;

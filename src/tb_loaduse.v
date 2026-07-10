@@ -13,7 +13,7 @@ module tb_loaduse;
     reg [31:0] data_mem  [0:255];
 
     wire [31:0] instr_addr, instr_data, data_addr, data_wdata, data_rdata;
-    wire        instr_valid, data_we, data_ready, halt;
+    wire        instr_valid, data_we, data_valid, data_ready, halt;
     wire [3:0]  data_be;
     wire [31:0] perf_cycle, perf_instret, perf_branch, perf_flush, perf_load_use_stall;
 
@@ -27,6 +27,7 @@ module tb_loaduse;
         .data_wdata (data_wdata),
         .data_be    (data_be),
         .data_we    (data_we),
+        .data_valid (data_valid),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
         .halt       (halt),

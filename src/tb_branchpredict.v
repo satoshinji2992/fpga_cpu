@@ -14,13 +14,14 @@ module tb_branchpredict;
     reg  [31:0] im_on  [0:255];
     reg  [31:0] dm_on  [0:255];
     wire [31:0] ia_on, id_on, da_on, dw_on, dr_on;
-    wire        iv_on, dwen_on, dready_on, halt_on;
+    wire        iv_on, dwen_on, dvalid_on, dready_on, halt_on;
     wire [3:0]  dbe_on;
     wire [31:0] pc_on, pi_on, pb_on, pf_on, pl_on, pm_on;
     riscv_pipeline_core #(.ENABLE_BP(1)) u_on (
         .clk(clk), .rst_n(rst_n),
         .instr_addr(ia_on), .instr_data(id_on), .instr_valid(iv_on),
         .data_addr(da_on), .data_wdata(dw_on), .data_be(dbe_on), .data_we(dwen_on),
+        .data_valid(dvalid_on),
         .data_rdata(dr_on), .data_ready(dready_on), .halt(halt_on),
         .perf_cycle(pc_on), .perf_instret(pi_on), .perf_branch(pb_on),
         .perf_flush(pf_on), .perf_load_use_stall(pl_on), .perf_bp_miss(pm_on)
@@ -40,13 +41,14 @@ module tb_branchpredict;
     reg  [31:0] im_off [0:255];
     reg  [31:0] dm_off [0:255];
     wire [31:0] ia_off, id_off, da_off, dw_off, dr_off;
-    wire        iv_off, dwen_off, dready_off, halt_off;
+    wire        iv_off, dwen_off, dvalid_off, dready_off, halt_off;
     wire [3:0]  dbe_off;
     wire [31:0] pc_off, pi_off, pb_off, pf_off, pl_off, pm_off;
     riscv_pipeline_core #(.ENABLE_BP(0)) u_off (
         .clk(clk), .rst_n(rst_n),
         .instr_addr(ia_off), .instr_data(id_off), .instr_valid(iv_off),
         .data_addr(da_off), .data_wdata(dw_off), .data_be(dbe_off), .data_we(dwen_off),
+        .data_valid(dvalid_off),
         .data_rdata(dr_off), .data_ready(dready_off), .halt(halt_off),
         .perf_cycle(pc_off), .perf_instret(pi_off), .perf_branch(pb_off),
         .perf_flush(pf_off), .perf_load_use_stall(pl_off), .perf_bp_miss(pm_off)

@@ -10,12 +10,17 @@
 //   0x1008 UART_STAT: 读 -> {30'b0, tx_busy, rx_pending}
 //   0x100C LED_OUT  : 写 -> LED[3:0]
 //   0x1010 KEY_IN   : 读 -> {28'b0, ~key4, ~key3, ~key2, ~key1} (按下为1)
-// CPU 核心不做任何修改: MMIO 读是组合逻辑, data_ready 恒为 1。
+//   0x1014 IC_HIT   : 读 -> I-Cache hit 计数
+//   0x1018 IC_MISS  : 读 -> I-Cache miss 计数
+//   0x2000_0000     : 片上扩展存储窗口 (保留 SDRAM 地址语义, 通过 ready 建模慢存储)
 //==================================================
 module top #(
-    parameter CLK_FREQ = 50000000,
-    parameter BAUD     = 115200,
-    parameter USE_2WAY_ICACHE = 1
+    parameter CLK_FREQ         = 10000000,  // 10MHz 分频后时钟
+    parameter BAUD             = 115200,
+    parameter USE_2WAY_ICACHE  = 0,
+    parameter USE_SDRAM_WINDOW = 1,
+    parameter SDRAM_LATENCY    = 4,
+    parameter SDRAM_AW         = 6
 )(
     input  wire clk,        // 核心板50MHz时钟 (T8)
     input  wire rst_n,      // 核心板RESET按键, 低有效 (L3)
@@ -32,6 +37,26 @@ module top #(
 );
 
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD;
+    localparam CLK_DIVIDER = 5;  // 50MHz -> 10MHz
+
+    //----------------------------------------------
+    // 时钟分频 (50MHz -> 10MHz)
+    //----------------------------------------------
+    reg [2:0] clk_div_cnt;
+    reg clk_div;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            clk_div_cnt <= 3'd0;
+            clk_div <= 1'b0;
+        end else begin
+            if (clk_div_cnt == CLK_DIVIDER - 1) begin
+                clk_div_cnt <= 3'd0;
+                clk_div <= ~clk_div;
+            end else begin
+                clk_div_cnt <= clk_div_cnt + 1'b1;
+            end
+        end
+    end
 
     //----------------------------------------------
     // CPU 数据/取指总线
@@ -48,6 +73,7 @@ module top #(
     wire [31:0] data_wdata;
     wire [3:0]  data_be;
     wire        data_we;
+    wire        data_valid;
     wire [31:0] data_rdata;
     wire        data_ready;
 
@@ -57,7 +83,7 @@ module top #(
     // 五级流水线 CPU (perf 计数器输出此处不用, 留空)
     //----------------------------------------------
     riscv_pipeline_core u_cpu (
-        .clk        (clk),
+        .clk        (clk_div),
         .rst_n      (rst_n),
         .instr_addr (instr_addr),
         .instr_data (instr_data),
@@ -66,6 +92,7 @@ module top #(
         .data_wdata (data_wdata),
         .data_be    (data_be),
         .data_we    (data_we),
+        .data_valid (data_valid),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
         .halt       (halt)
@@ -82,7 +109,7 @@ module top #(
             icache_2way #(
                 .LINES(8)
             ) u_icache (
-                .clk        (clk),
+                .clk        (clk_div),
                 .rst_n      (rst_n),
                 .cpu_addr   (instr_addr),
                 .mem_addr   (instr_rom_addr),
@@ -96,7 +123,7 @@ module top #(
             icache_direct_mapped #(
                 .LINES(8)
             ) u_icache (
-                .clk        (clk),
+                .clk        (clk_div),
                 .rst_n      (rst_n),
                 .cpu_addr   (instr_addr),
                 .mem_addr   (instr_rom_addr),
@@ -113,33 +140,96 @@ module top #(
     // 数据 RAM (1024 字, 按字节拆成 4 个字节宽阵列
     // 以便 XST 稳定推断为分布式 RAM) + MMIO 译码
     //
-    //   RAM 区域 : data_addr[31:12] == 0  (0x000-0xFFF)
-    //   IO  区域 : 其余 (0x1000+)
+    //   RAM   区域 : data_addr[31:12] == 0         (0x0000_0000-0x0000_0FFF)
+    //   SDRAM 区域 : data_addr[31:12] == 20'h20000 (当前仅实现低 64 words 的片上验证窗口)
+    //   IO    区域 : 其余 (0x1000+)
     //----------------------------------------------
     reg [7:0] data_mem_b0 [0:1023];
     reg [7:0] data_mem_b1 [0:1023];
     reg [7:0] data_mem_b2 [0:1023];
     reg [7:0] data_mem_b3 [0:1023];
+    reg [7:0] sdram_mem_b0 [0:(1<<SDRAM_AW)-1];
+    reg [7:0] sdram_mem_b1 [0:(1<<SDRAM_AW)-1];
+    reg [7:0] sdram_mem_b2 [0:(1<<SDRAM_AW)-1];
+    reg [7:0] sdram_mem_b3 [0:(1<<SDRAM_AW)-1];
+    reg       sdram_pending;
+    reg [7:0] sdram_wait_ctr;
+    reg [SDRAM_AW-1:0] sdram_req_idx;
+    reg [31:0] sdram_req_wdata;
+    reg [3:0]  sdram_req_be;
+    reg        sdram_req_we;
 
-    wire        ram_sel  = (data_addr[31:12] == 20'b0);
+    wire        ram_sel   = data_valid && (data_addr[31:12] == 20'b0);
+    wire        sdram_sel = data_valid && USE_SDRAM_WINDOW && (data_addr[31:12] == 20'h20000);
     wire [9:0]  data_idx = data_addr[11:2];
-    wire        io_sel   = ~ram_sel;
+    wire [SDRAM_AW-1:0] sdram_data_idx = data_addr[SDRAM_AW+1:2];
+    wire        io_sel   = data_valid && ~ram_sel && ~sdram_sel;
     wire [11:0] io_word  = data_addr[13:2];   // 0x1000->0x400, 0x1004->0x401 ...
     wire        is_tx    = io_sel & (io_word == 12'h400); // 0x1000
     wire        is_rx    = io_sel & (io_word == 12'h401); // 0x1004
     wire        is_stat  = io_sel & (io_word == 12'h402); // 0x1008
     wire        is_led   = io_sel & (io_word == 12'h403); // 0x100C
     wire        is_key   = io_sel & (io_word == 12'h404); // 0x1010
+    wire        is_hit   = io_sel & (io_word == 12'h405); // 0x1014
+    wire        is_miss  = io_sel & (io_word == 12'h406); // 0x1018
+    wire [SDRAM_AW-1:0] sdram_idx = sdram_pending ? sdram_req_idx : sdram_data_idx;
+    wire        sdram_ready = sdram_sel &&
+                              (sdram_pending ? (sdram_wait_ctr == 8'd0) :
+                                               (SDRAM_LATENCY == 0));
 
-    always @(posedge clk) begin
+    always @(posedge clk_div) begin
         if (ram_sel && data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
         if (ram_sel && data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
         if (ram_sel && data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
         if (ram_sel && data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
     end
 
+    always @(posedge clk_div or negedge rst_n) begin
+        if (!rst_n) begin
+            sdram_pending  <= 1'b0;
+            sdram_wait_ctr <= 8'd0;
+            sdram_req_idx  <= {SDRAM_AW{1'b0}};
+            sdram_req_wdata <= 32'd0;
+            sdram_req_be   <= 4'd0;
+            sdram_req_we   <= 1'b0;
+        end else if (!USE_SDRAM_WINDOW) begin
+            sdram_pending  <= 1'b0;
+            sdram_wait_ctr <= 8'd0;
+            sdram_req_idx  <= {SDRAM_AW{1'b0}};
+            sdram_req_wdata <= 32'd0;
+            sdram_req_be   <= 4'd0;
+            sdram_req_we   <= 1'b0;
+        end else if (!sdram_pending) begin
+            if (sdram_sel) begin
+                if (SDRAM_LATENCY == 0) begin
+                    if (data_we && data_be[0]) sdram_mem_b0[sdram_data_idx] <= data_wdata[7:0];
+                    if (data_we && data_be[1]) sdram_mem_b1[sdram_data_idx] <= data_wdata[15:8];
+                    if (data_we && data_be[2]) sdram_mem_b2[sdram_data_idx] <= data_wdata[23:16];
+                    if (data_we && data_be[3]) sdram_mem_b3[sdram_data_idx] <= data_wdata[31:24];
+                end else begin
+                    sdram_pending  <= 1'b1;
+                    sdram_wait_ctr <= SDRAM_LATENCY - 1;
+                    sdram_req_idx  <= sdram_data_idx;
+                    sdram_req_wdata <= data_wdata;
+                    sdram_req_be   <= data_be;
+                    sdram_req_we   <= data_we;
+                end
+            end
+        end else if (sdram_ready) begin
+            if (sdram_req_we && sdram_req_be[0]) sdram_mem_b0[sdram_req_idx] <= sdram_req_wdata[7:0];
+            if (sdram_req_we && sdram_req_be[1]) sdram_mem_b1[sdram_req_idx] <= sdram_req_wdata[15:8];
+            if (sdram_req_we && sdram_req_be[2]) sdram_mem_b2[sdram_req_idx] <= sdram_req_wdata[23:16];
+            if (sdram_req_we && sdram_req_be[3]) sdram_mem_b3[sdram_req_idx] <= sdram_req_wdata[31:24];
+            sdram_pending <= 1'b0;
+        end else begin
+            sdram_wait_ctr <= sdram_wait_ctr - 8'd1;
+        end
+    end
+
     wire [31:0] ram_rdata = {data_mem_b3[data_idx], data_mem_b2[data_idx],
                              data_mem_b1[data_idx], data_mem_b0[data_idx]};
+    wire [31:0] sdram_rdata = {sdram_mem_b3[sdram_idx], sdram_mem_b2[sdram_idx],
+                               sdram_mem_b1[sdram_idx], sdram_mem_b0[sdram_idx]};
 
     //----------------------------------------------
     // UART 收发器 (直接挂在 MMIO 上)
@@ -154,17 +244,17 @@ module top #(
     reg [3:0]  led_out;
 
     uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_rx (
-        .clk(clk), .rst_n(rst_n), .rx(uart_rx), .data(rx_data), .valid(rx_valid)
+        .clk(clk_div), .rst_n(rst_n), .rx(uart_rx), .data(rx_data), .valid(rx_valid)
     );
     uart_tx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_tx (
-        .clk(clk), .rst_n(rst_n), .start(tx_start), .data(tx_data),
+        .clk(clk_div), .rst_n(rst_n), .start(tx_start), .data(tx_data),
         .tx(uart_tx), .busy(tx_busy)
     );
 
     // MMIO 寄存器: rx 锁存 (valid 是单拍脉冲, 需要粘住的 rx_pending);
     // CPU 写 UART_RX 作为应答, 清除 rx_pending (无需读选通, 不用改 CPU 核)。
     // 写 UART_TX 启动发送; 写 LED_OUT 驱动 LED。
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk_div or negedge rst_n) begin
         if (!rst_n) begin
             rx_byte    <= 8'd0;
             rx_pending <= 1'b0;
@@ -194,15 +284,24 @@ module top #(
         is_rx   ? {24'b0, rx_byte} :
         is_stat ? {30'b0, tx_busy, rx_pending} :
         is_key  ? {28'b0, ~key4, ~key3, ~key2, ~key1} :
+        is_hit  ? icache_hit_count :
+        is_miss ? icache_miss_count :
                   32'b0;
 
-    assign data_rdata = ram_sel ? ram_rdata : io_rdata;
-    assign data_ready = 1'b1;
+    assign data_rdata = ram_sel   ? ram_rdata :
+                        sdram_sel ? sdram_rdata :
+                                    io_rdata;
+    assign data_ready = !data_valid ? 1'b1 :
+                        ram_sel     ? 1'b1 :
+                        io_sel      ? 1'b1 :
+                        sdram_sel   ? sdram_ready :
+                                      1'b1;
 
     //----------------------------------------------
     // 指令 ROM 初始化: NOP 填充 + 数据 RAM 清零 + MNIST8 float32 模型/程序
 //----------------------------------------------
     integer j;
+    integer k;
     initial begin
         for (j = 0; j < 1024; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
         for (j = 0; j < 1024; j = j + 1) begin
@@ -211,8 +310,18 @@ module top #(
             data_mem_b2[j] = 8'h0;
             data_mem_b3[j] = 8'h0;
         end
+        for (k = 0; k < (1<<SDRAM_AW); k = k + 1) begin
+            sdram_mem_b0[k] = 8'h0;
+            sdram_mem_b1[k] = 8'h0;
+            sdram_mem_b2[k] = 8'h0;
+            sdram_mem_b3[k] = 8'h0;
+        end
 `include "src/cnn_weights.vh"
+`ifdef SDRAM_DIAG_PROGRAM
+`include "src/sdram_diag_prog.vh"
+`else
 `include "src/cnn_prog.vh"
+`endif
     end
 
     //----------------------------------------------

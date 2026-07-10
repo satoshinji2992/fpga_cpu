@@ -17,6 +17,7 @@ module tb_pipeline_core;
     wire [31:0] data_wdata;
     wire [3:0]  data_be;
     wire        data_we;
+    wire        data_valid;
     wire [31:0] data_rdata;
     wire        data_ready;
     wire        halt;
@@ -35,6 +36,7 @@ module tb_pipeline_core;
         .data_wdata (data_wdata),
         .data_be    (data_be),
         .data_we    (data_we),
+        .data_valid (data_valid),
         .data_rdata (data_rdata),
         .data_ready (data_ready),
         .halt       (halt),

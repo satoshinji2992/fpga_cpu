@@ -11,6 +11,8 @@
 .equ UART_RX,   0x1004
 .equ UART_STAT, 0x1008
 .equ LED_OUT,   0x100C
+.equ IC_HIT,    0x1014
+.equ IC_MISS,   0x1018
 
 .equ IMG,     0x000
 .equ WEIGHT,  0x100     # 10 * 64 float32 words
@@ -317,14 +319,24 @@ print_mem_word:
     ret
 
 print_perf:
-    addi sp, sp, -4
+    addi sp, sp, -8
     sw   ra, 0(sp)
+    sw   s0, 4(sp)
     .puts "cycle=0x"
     rdcycle a0
     jal  ra, print_hex32
+    .puts " ic_hit=0x"
+    li   s0, IC_HIT
+    lw   a0, 0(s0)
+    jal  ra, print_hex32
+    .puts " ic_miss=0x"
+    li   s0, IC_MISS
+    lw   a0, 0(s0)
+    jal  ra, print_hex32
     .puts "\n"
     lw   ra, 0(sp)
-    addi sp, sp, 4
+    lw   s0, 4(sp)
+    addi sp, sp, 8
     ret
 
 # =============================================================== cnn_start

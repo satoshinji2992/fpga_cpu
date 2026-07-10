@@ -24,6 +24,7 @@ module riscv_pipeline_core #(
     output wire [31:0] data_wdata,
     output wire [3:0]  data_be,
     output wire        data_we,
+    output wire        data_valid,
     input  wire [31:0] data_rdata,
     input  wire        data_ready,
     output reg         halt,
@@ -523,7 +524,7 @@ module riscv_pipeline_core #(
         idex_valid && idex_mem_read && ifid_valid && (idex_rd != 5'd0) &&
         ((id_uses_rs1 && (idex_rd == id_rs1)) ||
          (id_uses_rs2 && (idex_rd == id_rs2)));
-    wire stall = load_use_hazard;
+    wire decode_stall = load_use_hazard;
 
     // Stage 2: IF-stage branch prediction. instr_data is the async-fetched
     // word at pc_reg, so its opcode and branch/jump target are known here.
@@ -554,7 +555,10 @@ module riscv_pipeline_core #(
     assign data_addr  = exmem_alu_result;
     assign data_wdata = store_shifted;
     assign data_we    = exmem_valid && exmem_mem_write;
+    assign data_valid = exmem_valid && (exmem_mem_read || exmem_mem_write);
     assign data_be    = data_we ? store_be : 4'b0000;
+    wire mem_wait     = data_valid && !data_ready;
+    wire pipe_stall   = mdu_stall || mem_wait;
 
     wire [7:0] load_byte =
         (exmem_alu_result[1:0] == 2'b00) ? data_rdata[7:0]   :
@@ -643,7 +647,7 @@ module riscv_pipeline_core #(
                 mdu_cnt <= mdu_cnt + 6'd1;
             end
 
-            if (!mdu_stall) begin
+            if (!pipe_stall) begin
                 if (memwb_valid)
                     perf_instret <= perf_instret + 32'd1;
                 if (memwb_valid && memwb_reg_write && (memwb_rd != 5'd0))
@@ -693,7 +697,7 @@ module riscv_pipeline_core #(
                     pc_reg      <= bp_redirect_pc;
                     ifid_valid  <= 1'b0;
                     idex_valid  <= 1'b0;
-                end else if (stall) begin
+                end else if (decode_stall) begin
                     perf_load_use_stall <= perf_load_use_stall + 32'd1;
                     idex_valid <= 1'b0;
                 end else if (!halt && instr_valid) begin

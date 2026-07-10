@@ -32,9 +32,10 @@ def find_tools():
               or os.path.join(os.path.dirname(iv), "vvp.exe"))
     return iv, vv
 
-def run_tb(iv, vv, srcs, label):
+def run_tb(iv, vv, srcs, label, extra_args=None):
     out = os.path.join(tempfile.gettempdir(), "fpgacpu_%s.out" % label)
-    cp = subprocess.run([iv, "-I", SRC, "-o", out] + [os.path.join(SRC, s) for s in srcs],
+    extra_args = extra_args or []
+    cp = subprocess.run([iv] + extra_args + ["-I", SRC, "-o", out] + [os.path.join(SRC, s) for s in srcs],
                         capture_output=True, text=True)
     if cp.returncode != 0 or not os.path.exists(out):
         return "", "compile fail: " + (cp.stderr or cp.stdout)[-400:]
@@ -59,24 +60,27 @@ def main():
     ver = subprocess.run([iv, "-V"], capture_output=True, text=True).stdout.split("\n")[0]
 
     TBS = [
-        ("self-test",     ["riscv_pipeline_core.v", "tb_pipeline_core.v"]),
-        ("load-use",      ["riscv_pipeline_core.v", "tb_loaduse.v"]),
-        ("branchpredict", ["riscv_pipeline_core.v", "tb_branchpredict.v"]),
-        ("muldiv",        ["riscv_pipeline_core.v", "tb_muldiv.v"]),
-        ("float",         ["riscv_pipeline_core.v", "tb_float.v"]),
-        ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
-        ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
-        ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
+        ("self-test",     ["riscv_pipeline_core.v", "tb_pipeline_core.v"], []),
+        ("load-use",      ["riscv_pipeline_core.v", "tb_loaduse.v"], []),
+        ("branchpredict", ["riscv_pipeline_core.v", "tb_branchpredict.v"], []),
+        ("muldiv",        ["riscv_pipeline_core.v", "tb_muldiv.v"], []),
+        ("float",         ["riscv_pipeline_core.v", "tb_float.v"], []),
+        ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"], []),
+        ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"], []),
+        ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"], []),
         ("cnn",           ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn.v"], []),
         ("cnn-ablation",  ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn_ablation.v"]),
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn_ablation.v"], []),
         ("shell",         ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
-                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_shell.v"], []),
+        ("sdram-diag",    ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_sdram_diag.v"],
+                           ["-DSDRAM_DIAG_PROGRAM"]),
     ]
     res = {}
-    for label, srcs in TBS:
-        res[label] = run_tb(iv, vv, srcs, label)
+    for label, srcs, extra_args in TBS:
+        res[label] = run_tb(iv, vv, srcs, label, extra_args)
 
     print("=" * 66)
     print(" fpga_cpu 课程设计功能扩展 — 集成展示")
@@ -89,7 +93,7 @@ def main():
     print("    %-16s %-8s %s" % ("testbench", "结果", "说明"))
     print("    " + "-" * 54)
     npass = 0
-    for label, _ in TBS:
+    for label, _, _ in TBS:
         out, err = res[label]
         if err:
             ok = False
