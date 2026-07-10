@@ -67,6 +67,7 @@ webtalk_pn.xml
 screenshot*.png
 /fpga_cpu/
 .DS_Store
+~$*.docx
 
 # Python local files
 __pycache__/

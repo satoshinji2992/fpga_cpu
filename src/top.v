@@ -36,7 +36,7 @@ module top #(
     parameter CLK_FREQ = 50000000,
     parameter BAUD     = 115200,
     parameter USE_2WAY_ICACHE = 1,
-    parameter PONG_TICK_CYCLES = (CLK_FREQ / 4) / 4
+    parameter PONG_TICK_CYCLES = (CLK_FREQ / 2) / 4
 )(
     input  wire clk,        // 核心板50MHz时钟 (T8)
     input  wire rst_n,      // 核心板RESET按键, 低有效 (L3)
@@ -61,19 +61,18 @@ module top #(
     output wire [12:0] sl_a, inout wire [15:0] sl_db
 );
 
-    localparam SYS_CLK_FREQ = CLK_FREQ / 4;
+    localparam SYS_CLK_FREQ = CLK_FREQ / 2;
     localparam CLKS_PER_BIT = SYS_CLK_FREQ / BAUD;
 
     // The board oscillator remains 50 MHz, while the complete SoC runs from a
-    // single 12.5 MHz global clock. The extra margin is intentional: physical
-    // tests showed data-path bit errors at 25 MHz despite functional RTL sims.
-    reg [1:0] clk_div4 = 2'b00;
+    // single 25 MHz global clock shared by CPU, RAM and all peripherals.
+    reg clk_div2 = 1'b0;
     // Keep the generated clock running during reset so every downstream
     // sequential block observes reset even when rst_n starts low at power-up.
     always @(posedge clk)
-        clk_div4 <= clk_div4 + 1'b1;
+        clk_div2 <= ~clk_div2;
     wire sys_clk;
-    BUFG u_sys_clk_buf (.I(clk_div4[1]), .O(sys_clk));
+    BUFG u_sys_clk_buf (.I(clk_div2), .O(sys_clk));
 
     // Assert reset asynchronously, but release it synchronously in the only
     // clock domain used by the SoC. This prevents different pipeline/cache/RAM

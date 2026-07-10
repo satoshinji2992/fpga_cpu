@@ -90,7 +90,7 @@ module tb_soc_io;
         send_irq();
         repeat(15000) @(posedge clk);
         send_paint();
-        repeat(3000000) @(posedge clk);
+        repeat(1500000) @(posedge clk);
         send_byte("x");
         repeat(200000) @(posedge clk);
         send_byte("d");

@@ -76,11 +76,11 @@ def render_paint_packet(payload: bytes) -> None:
 def render_perf_values(values: list[int]) -> None:
     cycle, instret, branch, flush, stall, bp_miss, mdu, hit, miss = values
     cpi = cycle / instret if instret else 0.0
-    throughput_mips = 12.5 / cpi if cpi else 0.0
+    throughput_mips = 25.0 / cpi if cpi else 0.0
     bp_accuracy = 100.0 * (branch - bp_miss) / branch if branch else 100.0
     accesses = hit + miss
     hit_rate = 100.0 * hit / accesses if accesses else 0.0
-    print("\n[CPU performance counters @ 12.5 MHz]")
+    print("\n[CPU performance counters @ 25 MHz]")
     print(f"cycle={cycle} (elapsed clocks)  instret={instret} (retired instructions)")
     print(f"CPI={cpi:.3f}  throughput={throughput_mips:.3f} MIPS")
     print(f"branch={branch}  flush={flush}  bp_miss={bp_miss}  BP accuracy={bp_accuracy:.2f}%")

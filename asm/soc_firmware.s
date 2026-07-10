@@ -56,7 +56,7 @@ start:
     sw   t0, 0(t1)
     li   t0, 8
     csrw mstatus, t0
-    .puts "\nRV32 shell 12M5 ODDR2 R12\n"
+    .puts "\nRV32 shell 25M ODDR2 R13\n"
     j    shell_loop
 
 irq_handler:
@@ -149,7 +149,7 @@ shell_help:
     j    shell_loop
 
 version_cmd:
-    .puts "build 12M5 STABLE ALL-SELFTEST IRQ-PONG R12\n"
+    .puts "build 25M ALL-SELFTEST FIXED-PRINT IRQ-PONG R13\n"
     j    shell_loop
 
 s_cmd:
@@ -421,41 +421,41 @@ hctn_bad:
     ret
 
 print_nibble:
-    addi sp, sp, -8
-    sw   ra, 0(sp)
-    sw   s0, 4(sp)
-    mv   s0, a0
     li   t0, 10
-    blt  s0, t0, pn_digit
-    addi a0, s0, 87
-    j    pn_put
+    blt  a0, t0, pn_digit
+    addi a0, a0, 87
+    j    putc
 pn_digit:
-    addi a0, s0, 48
-pn_put:
-    jal  ra, putc
-    lw   ra, 0(sp)
-    lw   s0, 4(sp)
-    addi sp, sp, 8
-    ret
+    addi a0, a0, 48
+    j    putc
 
 print_hex32:
-    addi sp, sp, -12
-    sw   ra, 0(sp)
-    sw   s0, 4(sp)
-    sw   s1, 8(sp)
-    mv   s0, a0
-    li   s1, 28
-ph_loop:
-    srl  a0, s0, s1
+    mv   a5, a0
+    mv   a6, ra
+    srli a0, a5, 28
     andi a0, a0, 15
     jal  ra, print_nibble
-    addi s1, s1, -4
-    bgez s1, ph_loop
-    lw   ra, 0(sp)
-    lw   s0, 4(sp)
-    lw   s1, 8(sp)
-    addi sp, sp, 12
-    ret
+    srli a0, a5, 24
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    srli a0, a5, 20
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    srli a0, a5, 16
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    srli a0, a5, 12
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    srli a0, a5, 8
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    srli a0, a5, 4
+    andi a0, a0, 15
+    jal  ra, print_nibble
+    andi a0, a5, 15
+    jal  ra, print_nibble
+    jalr x0, 0(a6)
 
 # Send a0 as four little-endian raw bytes. Used only inside framed packets.
 send_word_binary:
@@ -475,26 +475,19 @@ send_word_binary:
     jalr x0, 0(a6)
 
 print_mem_word:
-    addi sp, sp, -12
-    sw   ra, 0(sp)
-    sw   s0, 4(sp)
-    sw   s1, 8(sp)
-    mv   s0, a0
+    mv   a3, a0
+    mv   a4, ra
     .puts "mem"
-    addi a0, s0, 48
+    addi a0, a3, 48
     jal  ra, putc
     .puts "=0x"
-    slli s1, s0, 2
+    slli a3, a3, 2
     li   t0, SELFTEST_BASE
-    add  s1, s1, t0
-    lw   a0, 0(s1)
+    add  a3, a3, t0
+    lw   a0, 0(a3)
     jal  ra, print_hex32
     .puts "\n"
-    lw   ra, 0(sp)
-    lw   s0, 4(sp)
-    lw   s1, 8(sp)
-    addi sp, sp, 12
-    ret
+    jalr x0, 0(a4)
 
 print_perf:
     # Fixed-address snapshot and fully unrolled output. There is no stack and

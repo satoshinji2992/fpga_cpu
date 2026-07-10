@@ -30,7 +30,7 @@ module tb_shell;
     top #(
         .CLK_FREQ(1600000),
         .BAUD(100000),
-        .PONG_TICK_CYCLES(250000)
+        .PONG_TICK_CYCLES(500000)
     ) dut (
         .clk(clk), .rst_n(rst_n),
         .key1(1'b1), .key2(1'b1), .key3(1'b1), .key4(1'b1),

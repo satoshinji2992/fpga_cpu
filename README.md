@@ -103,13 +103,16 @@ scripts/
 data/
   mnist8_model.json       训练后导出的模型元数据和 8x8 演示模板
 
+image.txt                 自定义 8x8 数字输入示例
+experiment.md            当前进度、验证结果与待办记录
+计算机组成原理课程设计报告.docx  课程设计报告（PPA 暂保留旧 ISE 数据）
 xilinx.xise              ISE 14.7 工程
 ```
 
 ## 系统结构
 
 ```text
-TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 四分频后 SoC 运行于 12.5MHz）
+TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 二分频后 SoC 运行于 25MHz）
         |
         v
 五级流水线 CPU
@@ -124,7 +127,7 @@ TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 四分频后 SoC 运行于 12.5MHz）
         +-- MMIO UART -- Python 终端
 ```
 
-核心板的 U2/SH 与 U3/SL 均为 HY57V2562（4 Banks x 4M x 16 bit）。控制器让两片接收相同命令和地址，分别提供高/低 16 位，形成 64 MiB 的 32-bit 外部存储器。系统在 12.5 MHz 下使用 burst length 1、CAS latency 2、auto-precharge 和按时钟频率自动计算的周期刷新。
+核心板的 U2/SH 与 U3/SL 均为 HY57V2562（4 Banks x 4M x 16 bit）。控制器让两片接收相同命令和地址，分别提供高/低 16 位，形成 64 MiB 的 32-bit 外部存储器。系统在 25 MHz 下使用 burst length 1、CAS latency 2、auto-precharge 和按时钟频率自动计算的周期刷新。
 
 ## 板端功能
 
@@ -361,11 +364,11 @@ python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
 ```
 
-打开后会进入 CPU 串口 shell：
+打开后会进入 CPU 串口 shell。下面的 `SELFTEST PASS` 是组合自检全部通过时的预期输出；当前 R13 已通过 15 项仿真，板端组合自检仍需重新烧录复测：
 
 ```text
 SELFTEST PASS
-RV32 shell 12M5 ODDR2 R12
+RV32 shell 25M ODDR2 R13
 cpu>
 ```
 
@@ -467,11 +470,11 @@ data/mnist8_model.json   Python 端演示模板和训练元数据
 
 当前硬件时序友好的非负 float32 权重和偏置，在板端逐位浮点模型上的测试集准确率为 `82.37%`。FPGA 上只运行推理，不进行训练。
 
-开机或复位后，CPU 先执行自检，再进入串口 shell：
+开机或复位后，CPU 先执行自检，再进入串口 shell。全部通过时应输出：
 
 ```text
 SELFTEST PASS
-RV32 shell 12M5 ODDR2 R12
+RV32 shell 25M ODDR2 R13
 cpu>
 ```
 
@@ -481,7 +484,7 @@ shell 命令：
 h ver s m0-m9 irq sdram p ledX cnn pong paint q
 ```
 
-自检通过时四个 LED 全亮。结果保存在不会被 CNN 或游戏覆盖的固定区域：
+自检通过时四个 LED 全亮。当前 R13 的十个结果保存在不会被 CNN 或游戏覆盖的固定区域；板端应逐项读取确认，不能只依据 LED 判断：
 
 ```text
 m0 = 0x000000ff  RV32I 算术/逻辑/移位
