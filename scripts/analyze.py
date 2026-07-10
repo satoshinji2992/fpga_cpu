@@ -66,13 +66,18 @@ def main():
         ("float",         ["riscv_pipeline_core.v", "tb_float.v"]),
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
+        ("interrupt",     ["riscv_pipeline_core.v", "tb_interrupt.v"]),
+        ("sdram-wait",    ["riscv_pipeline_core.v", "sdram_latency_model.v", "tb_sdram_wait.v"]),
+        ("sdram-ctrl",    ["sdram_controller.v", "tb_sdram_controller.v"]),
         ("cache",         ["icache_direct_mapped.v", "icache_2way.v", "tb_cache.v"]),
-        ("cnn",           ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+        ("cnn",           ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
-        ("cnn-ablation",  ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+        ("cnn-ablation",  ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn_ablation.v"]),
-        ("shell",         ["top.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+        ("shell",         ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
+        ("soc-io",        ["top.v", "sdram_controller.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_soc_io.v"]),
     ]
     res = {}
     for label, srcs in TBS:

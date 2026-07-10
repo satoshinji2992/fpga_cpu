@@ -4,7 +4,7 @@
 The FPGA top now exposes UART as memory-mapped I/O to the RISC-V CPU. The
 program running on the CPU parses a tiny shell, receives an 8x8 digit image,
 runs fixed-weight inference, and owns a small Pong state machine. This script
-is only a UART terminal/client; command logic lives in asm/cnn_digit.s.
+is only a UART terminal/client; command logic lives in asm/soc_firmware.s.
 """
 
 import argparse
@@ -33,7 +33,8 @@ def list_serial_ports() -> None:
 
 
 def render_pong_state(line: str) -> bool:
-    match = re.search(r"P ([0-7]) ([0-5]) ([0-5]) ([01]) ([0-9a-fA-F])$", line.strip())
+    # y=6 is the CPU's out-of-bounds marker after the paddle misses.
+    match = re.search(r"P ([0-7]) ([0-6]) ([0-5]) ([01]) ([0-9a-fA-F])$", line.strip())
     if not match:
         return False
 
@@ -57,19 +58,98 @@ def render_pong_state(line: str) -> bool:
     return True
 
 
+def render_paint_packet(payload: bytes) -> None:
+    if len(payload) != 131:
+        return
+    cursor_x = payload[0] | (payload[1] << 8)
+    cursor_y = payload[2]
+    pixels = "".join({0: ".", 1: "#", 2: "@"}.get(value, "?") for value in payload[3:])
+    if sys.stdout.isatty():
+        print("\033[2J\033[H", end="")
+    print("+----------------+")
+    for row in range(8):
+        print("|" + pixels[row * 16:(row + 1) * 16] + "|")
+    print("+----------------+")
+    print(f"SDRAM canvas 512x256 (128 KiB)  cursor=({cursor_x},{cursor_y})", flush=True)
+
+
+def render_perf_values(values: list[int]) -> None:
+    cycle, instret, branch, flush, stall, bp_miss, mdu, hit, miss = values
+    cpi = cycle / instret if instret else 0.0
+    throughput_mips = 12.5 / cpi if cpi else 0.0
+    bp_accuracy = 100.0 * (branch - bp_miss) / branch if branch else 100.0
+    accesses = hit + miss
+    hit_rate = 100.0 * hit / accesses if accesses else 0.0
+    print("\n[CPU performance counters @ 12.5 MHz]")
+    print(f"cycle={cycle} (elapsed clocks)  instret={instret} (retired instructions)")
+    print(f"CPI={cpi:.3f}  throughput={throughput_mips:.3f} MIPS")
+    print(f"branch={branch}  flush={flush}  bp_miss={bp_miss}  BP accuracy={bp_accuracy:.2f}%")
+    print(f"stall={stall} (load/memory wait cycles)  mdu={mdu} (mul/div/rem instructions)")
+    print(f"ic_hit={hit}  ic_miss={miss}  I-cache hit rate={hit_rate:.2f}%", flush=True)
+
+
+def render_perf_state(line: str) -> bool:
+    """Backward-compatible parser for pre-R9 text firmware."""
+    match = re.fullmatch(r"perf ([0-9a-fA-F]{8}(?: [0-9a-fA-F]{8}){8})", line.strip())
+    if not match:
+        return False
+    render_perf_values([int(word, 16) for word in match.group(1).split()])
+    return True
+
+
 def reader_thread(ser: serial.Serial, stop_flag: threading.Event) -> None:
     line_buffer = ""
+    packet_stage = "text"
+    packet_kind = 0
+    packet_length = 0
+    packet_payload = bytearray()
     while not stop_flag.is_set():
         data = ser.read(256)
         if data:
-            text = data.decode("ascii", errors="replace")
-            print(text, end="", flush=True)
-            for char in text:
+            for byte in data:
+                if packet_stage == "text" and byte == 0xA5:
+                    packet_stage = "kind"
+                    continue
+                if packet_stage == "kind":
+                    if byte not in (ord("P"), ord("D")):
+                        print("\n[host] discarded malformed binary packet\n", end="")
+                        packet_stage = "text"
+                    else:
+                        packet_kind = byte
+                        packet_stage = "length"
+                    continue
+                if packet_stage == "length":
+                    expected = 36 if packet_kind == ord("P") else 131
+                    if byte != expected:
+                        print(f"\n[host] bad binary packet length {byte}, expected {expected}\n", end="")
+                        packet_stage = "text"
+                    else:
+                        packet_length = byte
+                        packet_payload.clear()
+                        packet_stage = "payload"
+                    continue
+                if packet_stage == "payload":
+                    packet_payload.append(byte)
+                    if len(packet_payload) == packet_length:
+                        if packet_kind == ord("P"):
+                            values = [int.from_bytes(packet_payload[i:i + 4], "little")
+                                      for i in range(0, 36, 4)]
+                            render_perf_values(values)
+                        else:
+                            render_paint_packet(bytes(packet_payload))
+                        packet_stage = "text"
+                    continue
+
+                char = chr(byte) if byte < 128 else "�"
+                print(char, end="")
                 if char == "\n":
-                    render_pong_state(line_buffer.rstrip("\r"))
+                    line = line_buffer.rstrip("\r")
+                    render_pong_state(line)
+                    render_perf_state(line)
                     line_buffer = ""
                 else:
                     line_buffer += char
+            sys.stdout.flush()
 
 
 def read_key() -> str:
@@ -177,7 +257,7 @@ def cnn_control_loop(ser: serial.Serial) -> None:
 
 
 def pong_control_loop(ser: serial.Serial) -> None:
-    print("[host] Pong controls: a/d move, s or Space step, n new, q back to CPU shell.")
+    print("[host] CPU Pong runs automatically. Controls: a/d move, n new, q back to CPU shell; s steps once.")
     while True:
         ch = read_key().lower()
         if ch in ("\x03", "\x04"):
@@ -187,7 +267,25 @@ def pong_control_loop(ser: serial.Serial) -> None:
         if ch not in ("a", "d", "s", "n", "q"):
             continue
         print(ch, flush=True)
-        ser.write(ch.encode("ascii") + b"\n")
+        # Pong UART input is interrupt-driven and consumes one byte at a time.
+        # Do not append a newline: after q it would leak into the CPU shell as
+        # an empty command, and during play it is needless IRQ traffic.
+        ser.write(ch.encode("ascii"))
+        if ch == "q":
+            time.sleep(0.2)
+            return
+
+
+def paint_control_loop(ser: serial.Serial) -> None:
+    print("[host] SDRAM Paint controls: W/A/S/D move, X or Space toggle, C clear, Q back to CPU shell.")
+    while True:
+        ch = read_key().lower()
+        if ch in ("\x03", "\x04"):
+            raise KeyboardInterrupt
+        if ch not in ("w", "a", "s", "d", "x", " ", "c", "q"):
+            continue
+        print("x" if ch == " " else ch, flush=True)
+        ser.write(ch.encode("ascii"))
         if ch == "q":
             time.sleep(0.2)
             return
@@ -201,7 +299,7 @@ def shell_mode(args: argparse.Namespace) -> int:
 
     print(f"Connected to {args.port} at {args.baud} baud.")
     print("Host shell commands are sent to the CPU.")
-    print("Useful commands: help, status/s, mem N/mN/0..3, perf/p, ledX, cnn, pong.")
+    print("Useful commands: help, status/s, self-test m0..m9, irq, sdram, perf/p, ledX, cnn, pong, paint.")
     print("Host-only: quit/exit closes this Python client.")
     time.sleep(0.2)
 
@@ -219,6 +317,8 @@ def shell_mode(args: argparse.Namespace) -> int:
                 cnn_control_loop(ser)
             elif cmd == "pong":
                 pong_control_loop(ser)
+            elif cmd == "paint":
+                paint_control_loop(ser)
     except KeyboardInterrupt:
         pass
     finally:

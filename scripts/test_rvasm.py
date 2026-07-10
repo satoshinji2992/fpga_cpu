@@ -73,6 +73,9 @@ check("auipc x1, 0x10",  asm_one("auipc x1, 0x10"),    0x00010097)
 check("jalr x1, 0(x2)",  asm_one("jalr x1, 0(x2)"),    0x000100E7)
 # CSR / system / custom
 check("csrrs x1,cycle,x0", asm_one("csrrs x1, cycle, x0"), 0xC00020F3)
+check("csrw mtvec,t0",    asm_one("csrw mtvec, t0"),        0x30529073)
+check("csrrs t3,mcause,x0", asm_one("csrrs t3, mcause, x0"), 0x34202E73)
+check("mret",             asm_one("mret"),                   0x30200073)
 check("ebreak",          asm_one("ebreak"),            0x00100073)
 check("bitrev x1, x2",   asm_one("bitrev x1, x2"),     0x0001208B)  # custom0 f3=2
 check("popcount x1, x2", asm_one("popcount x1, x2"),   0x0001108B)  # custom0 f3=1
@@ -94,6 +97,13 @@ a_li = Assembler(); a_li.pass1(["li a0, 0x12345678\n"])
 m_li, _ = a_li.build()
 check("li a0,0x12345678 @0 (lui)", m_li[0][0], 0x12345537)  # lui a0,0x12345
 check("li a0,0x12345678 @4 (addi)",m_li[4][0], 0x67850513)  # addi a0,a0,0x678
+
+# A large .equ used by li must also expand to LUI+ADDI.
+a_equ = Assembler()
+a_equ.pass1([".equ MMIO, 0x1018\n", "li t0, MMIO\n"])
+m_equ, _ = a_equ.build()
+check("li t0,large .equ @0 (lui)", m_equ[0][0], 0x000012B7)
+check("li t0,large .equ @4 (addi)", m_equ[4][0], 0x01828293)
 
 # ===================== program: labels + backward branch =====================
 prog = """

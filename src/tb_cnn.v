@@ -16,6 +16,11 @@ module tb_cnn;
     wire        uart_tx;
     reg         uart_rx_line = 1'b1;
     wire [3:0]  led;
+    wire sh_clk,sh_cke,sh_ncs,sh_nwe,sh_ncas,sh_nras;
+    wire sl_clk,sl_cke,sl_ncs,sl_nwe,sl_ncas,sl_nras;
+    wire [1:0] sh_dqm,sh_ba,sl_dqm,sl_ba;
+    wire [12:0] sh_a,sl_a;
+    wire [15:0] sh_db,sl_db;
 
     reg [7:0]   log [0:LOG_SIZE-1];
     integer     log_len = 0;
@@ -30,8 +35,14 @@ module tb_cnn;
         .clk(clk), .rst_n(rst_n),
         .key1(1'b1), .key2(1'b1), .key3(1'b1), .key4(1'b1),
         .uart_rx(uart_rx_line), .uart_tx(uart_tx),
-        .led1(led[0]), .led2(led[1]), .led3(led[2]), .led4(led[3])
+        .led1(led[0]), .led2(led[1]), .led3(led[2]), .led4(led[3]),
+        .sh_clk(sh_clk),.sh_cke(sh_cke),.sh_ncs(sh_ncs),.sh_nwe(sh_nwe),.sh_ncas(sh_ncas),.sh_nras(sh_nras),
+        .sh_dqm(sh_dqm),.sh_ba(sh_ba),.sh_a(sh_a),.sh_db(sh_db),
+        .sl_clk(sl_clk),.sl_cke(sl_cke),.sl_ncs(sl_ncs),.sl_nwe(sl_nwe),.sl_ncas(sl_ncas),.sl_nras(sl_nras),
+        .sl_dqm(sl_dqm),.sl_ba(sl_ba),.sl_a(sl_a),.sl_db(sl_db)
     );
+    sdram_device_model mem_model(.clk(sh_clk),.cke(sh_cke),.cs_n(sh_ncs),.ras_n(sh_nras),.cas_n(sh_ncas),.we_n(sh_nwe),
+        .dqm_lo(sl_dqm),.dqm_hi(sh_dqm),.ba(sh_ba),.addr(sh_a),.dq_lo(sl_db),.dq_hi(sh_db));
 
     always #5 clk = ~clk;
 
@@ -200,6 +211,14 @@ module tb_cnn;
 
         send_byte("q"); send_byte(8'h0A);
         repeat(READY_CYCLES) @(posedge clk);
+
+        if ({dut.data_mem_b3[768],dut.data_mem_b2[768],dut.data_mem_b1[768],dut.data_mem_b0[768]} !== 32'h000000ff ||
+            {dut.data_mem_b3[770],dut.data_mem_b2[770],dut.data_mem_b1[770],dut.data_mem_b0[770]} !== 32'h13579bdf ||
+            {dut.data_mem_b3[777],dut.data_mem_b2[777],dut.data_mem_b1[777],dut.data_mem_b0[777]} !== 32'h5aa5c33c ||
+            {dut.data_mem_b3[778],dut.data_mem_b2[778],dut.data_mem_b1[778],dut.data_mem_b0[778]} !== 32'h00000000) begin
+            $display("CNN FAIL: persistent self-test slots were overwritten");
+            fails = fails + 1;
+        end
 
         $display("captured %0d tx bytes", log_len);
         if (fails == 0)

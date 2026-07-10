@@ -4,8 +4,8 @@ rvasm.py — a small two-pass assembler for the RV32I/M subset + CSR + custom
 instructions implemented by src/riscv_pipeline_core.v in this project.
 
 There is no RISC-V toolchain in this repo; the existing instr_mem programs are
-hand-assembled. This assembler makes real software (e.g. asm/cnn_digit.s) writable
-in assembly and emits a Verilog initial-block fragment (src/cnn_prog.vh) that
+hand-assembled. This assembler makes real software (e.g. asm/soc_firmware.s) writable
+in assembly and emits a Verilog initial-block fragment (src/soc_firmware.vh) that
 top.v `include`s to initialize instr_mem.
 
 Supported:
@@ -29,8 +29,8 @@ Encoding reference (confirmed against riscv_pipeline_core.v decode):
   CSR rd  : opcode 1110011, funct3 010 (csrrs), csr=0xC00 cycle / 0xC02 instret
 
 Usage:
-  python3 scripts/rvasm.py asm/cnn_digit.s --vh src/cnn_prog.vh --base 0
-  python3 scripts/rvasm.py asm/cnn_digit.s --hex /tmp/cnn.hex
+  python3 scripts/rvasm.py asm/soc_firmware.s --vh src/soc_firmware.vh --base 0
+  python3 scripts/rvasm.py asm/soc_firmware.s --hex /tmp/firmware.hex
 """
 
 import sys
@@ -197,7 +197,11 @@ LD_TAB = {"lb": 0b000, "lh": 0b001, "lw": 0b010, "lbu": 0b100, "lhu": 0b101}
 ST_TAB = {"sb": 0b000, "sh": 0b001, "sw": 0b010}
 BR_TAB = {"beq": 0b000, "bne": 0b001, "blt": 0b100, "bge": 0b101,
           "bltu": 0b110, "bgeu": 0b111}
-CSR_NAMES = {"cycle": 0xC00, "instret": 0xC02, "time": 0xC01}
+CSR_NAMES = {
+    "mstatus": 0x300, "mie": 0x304, "mtvec": 0x305,
+    "mepc": 0x341, "mcause": 0x342, "mip": 0x344,
+    "cycle": 0xC00, "time": 0xC01, "instret": 0xC02,
+}
 
 # ----------------------------------------------------------------------------
 # Operand splitting
@@ -250,6 +254,9 @@ def expand_line(mnemonic, ops, putc_label):
         return [("jalr", "x0, 0, ra")]
     if m == "call":
         return [("jal", "ra, " + ops)]
+    if m == "csrw":
+        csr, rs = split_operands(ops)
+        return [("csrrw", "x0, %s, %s" % (csr, rs))]
     # branch-if-zero forms
     if m in ("beqz", "bnez", "bltz", "bgez", "blez", "bgtz"):
         rd, off = split_operands(ops)
@@ -399,6 +406,14 @@ class Assembler:
                 if first in (".text", ".data", ".globl", ".global", ".section"):
                     continue   # layout directives ignored (single address space)
 
+                # Resolve known .equ constants before pseudo expansion. A
+                # symbolic `li` may need LUI+ADDI (for example MMIO 0x1018),
+                # while unresolved symbols are otherwise assumed to be small.
+                if first == "li":
+                    li_ops = split_operands(rest)
+                    if len(li_ops) == 2 and li_ops[1] in self.symbols:
+                        rest = "%s, %d" % (li_ops[0], self.symbols[li_ops[1]])
+
                 for rmn, rop in fully_expand(first, rest, self.putc_label):
                     self.items.append((addr, rmn, rop, lineno))
                     addr += 4
@@ -419,7 +434,7 @@ class Assembler:
             except AsmError as e:
                 raise AsmError("line %d: %s (mnemonic %s, ops %r)" %
                                (lineno, e, mn, ops))
-            out.append((addr, w, "%-6s %s" % (mn, ops)))
+            out.append((addr, w, ("%-6s %s" % (mn, ops)).rstrip()))
         return out, word_addrs
 
     # ---- encode one instruction ----
@@ -506,18 +521,21 @@ class Assembler:
             rd = parse_reg(ops)
             # csrrs rd, csr, x0
             return enc_i(OPC_SYS, rd, 0b010, 0, csr)
-        # raw csrrs rd, csr, rs1
-        if mn == "csrrs":
+        # raw CSR register operations
+        if mn in ("csrrs", "csrrw"):
             rd, csr, rs1 = split_operands(ops)
             csrnum = CSR_NAMES.get(csr.strip(), None)
             if csrnum is None:
                 csrnum = parse_imm(csr, sym)
-            return enc_i(OPC_SYS, parse_reg(rd), 0b010, parse_reg(rs1), csrnum)
+            funct3 = 0b010 if mn == "csrrs" else 0b001
+            return enc_i(OPC_SYS, parse_reg(rd), funct3, parse_reg(rs1), csrnum)
         # system
         if mn == "ecall":
             return 0x00000073
         if mn == "ebreak":
             return 0x00100073
+        if mn == "mret":
+            return 0x30200073
         raise AsmError("unknown mnemonic %r" % mn)
 
     # ---- output formatters ----

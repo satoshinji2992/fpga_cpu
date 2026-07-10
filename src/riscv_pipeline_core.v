@@ -23,9 +23,11 @@ module riscv_pipeline_core #(
     output wire [31:0] data_addr,
     output wire [31:0] data_wdata,
     output wire [3:0]  data_be,
+    output wire        data_valid,
     output wire        data_we,
     input  wire [31:0] data_rdata,
     input  wire        data_ready,
+    input  wire        irq_external,
     output reg         halt,
     // Performance counters (observable state, not part of the bus).
     //   cycle    : total clock cycles elapsed
@@ -68,12 +70,12 @@ module riscv_pipeline_core #(
     function [31:0] popcount;
         input [31:0] x;
         integer p;
-        reg [31:0] c;
+        reg [5:0] c;
         begin
-            c = 32'b0;
+            c = 6'b0;
             for (p = 0; p < 32; p = p + 1)
-                c = c + {31'b0, x[p]};
-            popcount = c;
+                c = c + {5'b0, x[p]};
+            popcount = {26'b0, c};
         end
     endfunction
     function [31:0] bitreverse;
@@ -114,66 +116,6 @@ module riscv_pipeline_core #(
                 end else begin
                     fmul32 = {sign, er[7:0], prod[45:23]};
                 end
-            end
-        end
-    endfunction
-
-    function [31:0] fadd32;
-        input [31:0] a;
-        input [31:0] b;
-        reg sa, sb, sr;
-        reg [7:0] ea, eb, er;
-        reg [24:0] ma, mb, mr;
-        reg [7:0] diff;
-        integer sh;
-        begin
-            sa = a[31]; sb = b[31];
-            ea = a[30:23]; eb = b[30:23];
-            ma = (a[30:0] == 31'b0) ? 25'b0 : {1'b0, 1'b1, a[22:0]};
-            mb = (b[30:0] == 31'b0) ? 25'b0 : {1'b0, 1'b1, b[22:0]};
-
-            if (ma == 25'b0) begin
-                fadd32 = b;
-            end else if (mb == 25'b0) begin
-                fadd32 = a;
-            end else begin
-                if (ea >= eb) begin
-                    diff = ea - eb;
-                    er = ea;
-                    mb = (diff > 8'd24) ? 25'b0 : (mb >> diff);
-                end else begin
-                    diff = eb - ea;
-                    er = eb;
-                    ma = (diff > 8'd24) ? 25'b0 : (ma >> diff);
-                end
-
-                if (sa == sb) begin
-                    mr = ma + mb;
-                    sr = sa;
-                    if (mr[24]) begin
-                        mr = mr >> 1;
-                        er = er + 8'd1;
-                    end
-                end else begin
-                    if (ma >= mb) begin
-                        mr = ma - mb;
-                        sr = sa;
-                    end else begin
-                        mr = mb - ma;
-                        sr = sb;
-                    end
-                    for (sh = 0; sh < 24; sh = sh + 1) begin
-                        if (!mr[23] && (mr != 25'b0) && (er != 8'b0)) begin
-                            mr = mr << 1;
-                            er = er - 8'd1;
-                        end
-                    end
-                end
-
-                if (mr == 25'b0)
-                    fadd32 = 32'b0;
-                else
-                    fadd32 = {sr, er, mr[22:0]};
             end
         end
     endfunction
@@ -254,6 +196,7 @@ module riscv_pipeline_core #(
     reg [31:0] idex_pred_target;
     reg        idex_mul_div;       // Stage 4: RV32M op
     reg        idex_is_csr;        // Stage 7: CSR read
+    reg [2:0]  idex_csr_op;
     reg [11:0] idex_csr_addr;
 
     // EX/MEM
@@ -342,7 +285,8 @@ module riscv_pipeline_core #(
     wire id_is_custom0 = (id_opcode == 7'b0001011);                  // Stage 5: custom-0
     wire id_is_system  = (id_opcode == 7'b1110011);                  // Stage 7: SYSTEM/CSR
     wire [11:0] id_csr_addr  = ifid_instr[31:20];
-    wire id_is_csr_read = id_is_system && (id_funct3 == 3'b010);     // CSRRS (RDCYCLE/RDINSTRET)
+    wire id_is_csr_read = id_is_system && ((id_funct3 == 3'b001) ||
+                                           (id_funct3 == 3'b010));    // CSRRW/CSRRS
 
     reg [4:0] id_alu_ctrl;
     reg [31:0] id_imm;
@@ -405,6 +349,124 @@ module riscv_pipeline_core #(
     wire [31:0] ex_alu_src1 = idex_auipc ? idex_pc : ex_rs1_value;
     wire [31:0] ex_alu_src2 = idex_use_imm ? idex_imm : ex_rs2_value;
 
+    // Multi-cycle float32 add. The old combinational normalizer unrolled 24
+    // dependent shifts into thousands of LUTs and a ~100 ns path. This FSM
+    // performs one alignment/normalization shift per cycle while holding EX.
+    localparam [1:0] FADD_IDLE  = 2'd0,
+                     FADD_ALIGN = 2'd1,
+                     FADD_ADD   = 2'd2,
+                     FADD_NORM  = 2'd3;
+    reg [1:0]  fadd_state;
+    reg [24:0] fadd_ma, fadd_mb, fadd_mr;
+    reg [7:0]  fadd_exp, fadd_diff;
+    reg        fadd_sa, fadd_sb, fadd_sr, fadd_shift_b;
+    reg [31:0] fadd_result;
+    reg        fadd_done;
+    wire       fadd_req = idex_valid && (idex_alu_ctrl == ALU_FADD32);
+    wire       fadd_stall = fadd_req && !fadd_done;
+    wire [24:0] fadd_sum = fadd_ma + fadd_mb;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fadd_state   <= FADD_IDLE;
+            fadd_ma      <= 25'd0;
+            fadd_mb      <= 25'd0;
+            fadd_mr      <= 25'd0;
+            fadd_exp     <= 8'd0;
+            fadd_diff    <= 8'd0;
+            fadd_sa      <= 1'b0;
+            fadd_sb      <= 1'b0;
+            fadd_sr      <= 1'b0;
+            fadd_shift_b <= 1'b0;
+            fadd_result  <= 32'd0;
+            fadd_done    <= 1'b0;
+        end else begin
+            fadd_done <= 1'b0;
+            case (fadd_state)
+                FADD_IDLE: begin
+                    if (fadd_req && !fadd_done) begin
+                        if (ex_rs1_value[30:0] == 31'd0) begin
+                            fadd_result <= ex_rs2_value;
+                            fadd_done   <= 1'b1;
+                        end else if (ex_rs2_value[30:0] == 31'd0) begin
+                            fadd_result <= ex_rs1_value;
+                            fadd_done   <= 1'b1;
+                        end else begin
+                            fadd_sa <= ex_rs1_value[31];
+                            fadd_sb <= ex_rs2_value[31];
+                            fadd_ma <= {1'b0, 1'b1, ex_rs1_value[22:0]};
+                            fadd_mb <= {1'b0, 1'b1, ex_rs2_value[22:0]};
+                            if (ex_rs1_value[30:23] >= ex_rs2_value[30:23]) begin
+                                fadd_exp     <= ex_rs1_value[30:23];
+                                fadd_shift_b <= 1'b1;
+                                if ((ex_rs1_value[30:23] - ex_rs2_value[30:23]) > 8'd24) begin
+                                    fadd_mb   <= 25'd0;
+                                    fadd_diff <= 8'd0;
+                                end else begin
+                                    fadd_diff <= ex_rs1_value[30:23] - ex_rs2_value[30:23];
+                                end
+                            end else begin
+                                fadd_exp     <= ex_rs2_value[30:23];
+                                fadd_shift_b <= 1'b0;
+                                if ((ex_rs2_value[30:23] - ex_rs1_value[30:23]) > 8'd24) begin
+                                    fadd_ma   <= 25'd0;
+                                    fadd_diff <= 8'd0;
+                                end else begin
+                                    fadd_diff <= ex_rs2_value[30:23] - ex_rs1_value[30:23];
+                                end
+                            end
+                            fadd_state <= FADD_ALIGN;
+                        end
+                    end
+                end
+                FADD_ALIGN: begin
+                    if (fadd_diff != 0) begin
+                        if (fadd_shift_b)
+                            fadd_mb <= fadd_mb >> 1;
+                        else
+                            fadd_ma <= fadd_ma >> 1;
+                        fadd_diff <= fadd_diff - 1'b1;
+                    end else begin
+                        fadd_state <= FADD_ADD;
+                    end
+                end
+                FADD_ADD: begin
+                    if (fadd_sa == fadd_sb) begin
+                        if (fadd_sum[24])
+                            fadd_result <= {fadd_sa, fadd_exp + 1'b1, fadd_sum[23:1]};
+                        else
+                            fadd_result <= {fadd_sa, fadd_exp, fadd_sum[22:0]};
+                        fadd_done  <= 1'b1;
+                        fadd_state <= FADD_IDLE;
+                    end else begin
+                        if (fadd_ma >= fadd_mb) begin
+                            fadd_mr <= fadd_ma - fadd_mb;
+                            fadd_sr <= fadd_sa;
+                        end else begin
+                            fadd_mr <= fadd_mb - fadd_ma;
+                            fadd_sr <= fadd_sb;
+                        end
+                        fadd_state <= FADD_NORM;
+                    end
+                end
+                default: begin // FADD_NORM
+                    if (fadd_mr == 0) begin
+                        fadd_result <= 32'd0;
+                        fadd_done   <= 1'b1;
+                        fadd_state  <= FADD_IDLE;
+                    end else if (!fadd_mr[23] && (fadd_exp != 0)) begin
+                        fadd_mr  <= fadd_mr << 1;
+                        fadd_exp <= fadd_exp - 1'b1;
+                    end else begin
+                        fadd_result <= {fadd_sr, fadd_exp, fadd_mr[22:0]};
+                        fadd_done   <= 1'b1;
+                        fadd_state  <= FADD_IDLE;
+                    end
+                end
+            endcase
+        end
+    end
+
     reg [31:0] ex_alu_result;
     always @(*) begin
         case (idex_alu_ctrl)
@@ -420,27 +482,31 @@ module riscv_pipeline_core #(
             ALU_SLTU:     ex_alu_result = {31'b0, (ex_alu_src1 < ex_alu_src2)};
             ALU_POPCOUNT: ex_alu_result = popcount(ex_alu_src1);     // Stage 5
             ALU_BITREV:   ex_alu_result = bitreverse(ex_alu_src1);   // Stage 5
-            ALU_FADD32:   ex_alu_result = fadd32(ex_alu_src1, ex_rs2_value);
+            ALU_FADD32:   ex_alu_result = fadd_result;
             ALU_FMUL32:   ex_alu_result = fmul32(ex_alu_src1, ex_rs2_value);
             ALU_FGT32:    ex_alu_result = {31'b0, fgt32_bit(ex_alu_src1, ex_rs2_value)};
             default:      ex_alu_result = 32'b0;
         endcase
     end
 
-    // Stage 4: RV32M. Multiply is single-cycle (infers a DSP48). Divide uses a
+    // Stage 4: RV32M. One sign-configurable multiplier is shared by all four
+    // MUL variants. The former three parallel products wasted DSP/LUT area.
+    // Divide uses a
     // 32-cycle restoring-division FSM — the combinational / and % it replaced
     // synthesized to a giant carry chain that overflowed XC6SLX9. The FSM is
     // inlined here so no new file needs adding to the ISE project.
-    wire [63:0] m_prod_ss = $signed(ex_rs1_value) * $signed(ex_rs2_value);
-    wire [63:0] m_prod_uu = ex_rs1_value * ex_rs2_value;
-    wire [63:0] m_prod_su = $signed(ex_rs1_value) * $signed({32'd0, ex_rs2_value});
+    wire mul_a_signed = (idex_funct3 == 3'b001) || (idex_funct3 == 3'b010);
+    wire mul_b_signed = (idex_funct3 == 3'b001);
+    wire signed [32:0] mul_a_ext = mul_a_signed ? {ex_rs1_value[31], ex_rs1_value} :
+                                                {1'b0, ex_rs1_value};
+    wire signed [32:0] mul_b_ext = mul_b_signed ? {ex_rs2_value[31], ex_rs2_value} :
+                                                {1'b0, ex_rs2_value};
+    wire signed [65:0] m_product = mul_a_ext * mul_b_ext;
     reg  [31:0] mul_result;
     always @(*) begin
         case (idex_funct3)
-            3'b000:  mul_result = m_prod_ss[31:0];   // MUL
-            3'b001:  mul_result = m_prod_ss[63:32];  // MULH
-            3'b010:  mul_result = m_prod_su[63:32];  // MULHSU
-            default: mul_result = m_prod_uu[63:32];  // MULHU
+            3'b000:  mul_result = m_product[31:0];   // MUL
+            default: mul_result = m_product[63:32];  // MULH/MULHSU/MULHU
         endcase
     end
 
@@ -466,11 +532,32 @@ module riscv_pipeline_core #(
     wire mdu_running = (mdu_state == MDU_RUN);
     wire mdu_stall   = mdu_req && !mdu_done;
 
-    // Stage 7: CSR read. Map MCYCLE(0xC00)/MINSTRET(0xC02) to the live perf
-    // counters; other CSRs read 0.
+    // Minimal machine-mode interrupt CSRs plus cycle/instret.
+    reg [31:0] csr_mstatus;
+    reg [31:0] csr_mie;
+    reg [31:0] csr_mtvec;
+    reg [31:0] csr_mepc;
+    reg [31:0] csr_mcause;
+    reg        irq_pending;
+    wire       irq_in = (irq_external === 1'b1);
+    wire [31:0] csr_mip = {20'b0, irq_pending, 11'b0};
     wire [31:0] csr_rdata = (idex_csr_addr == 12'hC00) ? perf_cycle :
                             (idex_csr_addr == 12'hC02) ? perf_instret :
+                            (idex_csr_addr == 12'h300) ? csr_mstatus :
+                            (idex_csr_addr == 12'h304) ? csr_mie :
+                            (idex_csr_addr == 12'h305) ? csr_mtvec :
+                            (idex_csr_addr == 12'h341) ? csr_mepc :
+                            (idex_csr_addr == 12'h342) ? csr_mcause :
+                            (idex_csr_addr == 12'h344) ? csr_mip :
                                                           32'b0;
+    wire csr_write_en = idex_valid && idex_is_csr &&
+                        ((idex_csr_op == 3'b001) ||
+                         ((idex_csr_op == 3'b010) && (idex_rs1 != 5'd0)));
+    wire [31:0] csr_write_data = (idex_csr_op == 3'b001) ? ex_rs1_value :
+                                 (csr_rdata | ex_rs1_value);
+    wire irq_enabled = csr_mstatus[3] && csr_mie[11];
+    wire take_interrupt = !halt && irq_pending && irq_enabled;
+    wire ex_is_mret = idex_valid && (idex_instr == 32'h30200073);
     wire [31:0] ex_result = idex_is_csr  ? csr_rdata :
                             idex_mul_div ? (idex_funct3[2] ? mdu_result : mul_result) :
                                            ex_alu_result;
@@ -553,6 +640,7 @@ module riscv_pipeline_core #(
 
     assign data_addr  = exmem_alu_result;
     assign data_wdata = store_shifted;
+    assign data_valid = exmem_valid && (exmem_mem_read || exmem_mem_write);
     assign data_we    = exmem_valid && exmem_mem_write;
     assign data_be    = data_we ? store_be : 4'b0000;
 
@@ -575,6 +663,7 @@ module riscv_pipeline_core #(
         exmem_jal_or_jalr ? exmem_pc_plus4 :
         exmem_lui         ? exmem_lui_data :
                              exmem_alu_result;
+    wire mem_wait = data_valid && !data_ready;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -595,6 +684,12 @@ module riscv_pipeline_core #(
             mdu_cnt    <= 6'd0;
             mdu_done   <= 1'b0;
             mdu_result <= 32'd0;
+            csr_mstatus <= 32'd0;
+            csr_mie     <= 32'd0;
+            csr_mtvec   <= 32'd0;
+            csr_mepc    <= 32'd0;
+            csr_mcause  <= 32'd0;
+            irq_pending <= 1'b0;
             // Register file is intentionally NOT reset here. Spartan-6
             // distributed RAM (SLICEM) has no per-bit reset, so resetting the
             // array makes XST build 1024 FFs + wide read muxes instead of
@@ -606,6 +701,10 @@ module riscv_pipeline_core #(
             // program's own run rather than idle spins after halt.
             if (!halt)
                 perf_cycle <= perf_cycle + 32'd1;
+            if (irq_in && csr_mstatus[3])
+                irq_pending <= 1'b1;
+            if (mem_wait)
+                perf_load_use_stall <= perf_load_use_stall + 32'd1;
             // Stage 4: multi-cycle divider FSM (runs every cycle; a stall just
             // waits). mdu_stall = a divide is in EX and not yet done.
             mdu_done <= 1'b0;
@@ -643,11 +742,23 @@ module riscv_pipeline_core #(
                 mdu_cnt <= mdu_cnt + 6'd1;
             end
 
-            if (!mdu_stall) begin
+            if (!mdu_stall && !fadd_stall && !mem_wait) begin
                 if (memwb_valid)
                     perf_instret <= perf_instret + 32'd1;
                 if (memwb_valid && memwb_reg_write && (memwb_rd != 5'd0))
                     regs[memwb_rd] <= memwb_result;
+
+                if (csr_write_en) begin
+                    case (idex_csr_addr)
+                        12'h300: csr_mstatus <= csr_write_data;
+                        12'h304: csr_mie     <= csr_write_data;
+                        12'h305: csr_mtvec   <= csr_write_data;
+                        12'h341: csr_mepc    <= csr_write_data;
+                        12'h342: csr_mcause  <= csr_write_data;
+                        12'h344: irq_pending <= csr_write_data[11];
+                        default: begin end
+                    endcase
+                end
 
                 memwb_valid     <= exmem_valid;
                 memwb_reg_write <= exmem_reg_write;
@@ -693,6 +804,21 @@ module riscv_pipeline_core #(
                     pc_reg      <= bp_redirect_pc;
                     ifid_valid  <= 1'b0;
                     idex_valid  <= 1'b0;
+                end else if (take_interrupt) begin
+                    perf_flush  <= perf_flush + 32'd1;
+                    csr_mepc    <= ifid_valid ? ifid_pc : pc_reg;
+                    csr_mcause  <= 32'h8000000B;
+                    csr_mstatus <= csr_mstatus & ~32'h00000008;
+                    irq_pending <= 1'b0;
+                    pc_reg      <= csr_mtvec;
+                    ifid_valid  <= 1'b0;
+                    idex_valid  <= 1'b0;
+                end else if (ex_is_mret) begin
+                    perf_flush  <= perf_flush + 32'd1;
+                    csr_mstatus <= csr_mstatus | 32'h00000008;
+                    pc_reg      <= csr_mepc;
+                    ifid_valid  <= 1'b0;
+                    idex_valid  <= 1'b0;
                 end else if (stall) begin
                     perf_load_use_stall <= perf_load_use_stall + 32'd1;
                     idex_valid <= 1'b0;
@@ -730,6 +856,7 @@ module riscv_pipeline_core #(
                     idex_auipc     <= id_is_auipc;
                     idex_mul_div   <= id_is_m_ext;
                     idex_is_csr    <= id_is_csr_read;     // Stage 7
+                    idex_csr_op    <= id_funct3;
                     idex_csr_addr  <= id_csr_addr;        // Stage 7
                     if (ifid_valid && id_is_m_ext)
                         perf_mdu_inst <= perf_mdu_inst + 32'd1;

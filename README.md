@@ -22,8 +22,10 @@
 - 片上指令 ROM 和片上数据 RAM
 - 8 行直接映射 I-Cache：`src/icache_direct_mapped.v`
 - LED / KEY / UART memory-mapped I/O
+- 两片 HY57V2562 x16 并行组成 64 MiB x32 SDRAM，支持初始化、刷新、字节掩码和 wait-state
+- UART RX / KEY 机器态外部中断，支持 `mstatus/mie/mtvec/mepc/mcause/mip` 和 `MRET`
 - CPU 通过 MMIO 自己读 UART 输入、写 UART 输出
-- CPU 自己运行串口 shell、8x8 数字推理和 Pong 程序：`asm/cnn_digit.s`
+- CPU 自己运行串口 shell、8x8 数字推理、Pong 和 128 KiB SDRAM Paint：`asm/soc_firmware.s`
 - Python 串口终端：`scripts/serial_shell.py`
 - 硬件性能计数器：cycle、instret、branch、flush、load-use stall、branch miss、mdu inst
 - 最小 CSR 读取：`RDCYCLE` / `RDINSTRET`
@@ -52,11 +54,13 @@
   - `src/tb_demo.v`
   - `src/tb_cnn.v`
   - `src/tb_shell.v`
+  - `src/tb_interrupt.v`
+  - `src/tb_sdram_controller.v`
+  - `src/tb_soc_io.v`
 
 ### 未实现或部分实现
 
-- 未使用 SDRAM，当前只使用片上 ROM/RAM
-- 未实现完整异常、中断和特权架构
+- 已实现机器态外部中断，但未实现完整异常、嵌套中断和完整特权架构
 - 未实现 MMU / 虚拟内存
 - 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32/FGT32`
 - 当前顶层仍使用直接映射 I-Cache；2 路组相联 cache 主要用于仿真对比
@@ -73,17 +77,21 @@ src/
   top.v                   FPGA 顶层
   top.ucf                 TEC-PLUS 核心板引脚约束
   uart_rx.v / uart_tx.v   UART 收发
-  cnn_prog.vh             由 asm/cnn_digit.s 生成的指令 ROM 初始化
+  sdram_controller.v      双 HY57V2562 SDRAM 控制器
+  soc_firmware.vh         由 asm/soc_firmware.s 生成的指令 ROM 初始化
   tb_cpu_core.v           单周期 CPU 仿真
   tb_pipeline_core.v      流水线 CPU 仿真
   tb_all_features.v       综合功能演示仿真
   tb_cnn.v                CPU 自主 UART MMIO 数字推理仿真
   tb_shell.v              CPU shell / Pong UART 仿真
+  tb_interrupt.v          机器态外部中断仿真
+  tb_sdram_controller.v   SDRAM 命令/掩码/刷新仿真
+  tb_soc_io.v             UART shell + SDRAM + KEY IRQ 集成仿真
   tb_float.v              custom float32 加法/乘法仿真
   tb_*.v                  拓展功能专项仿真
 
 asm/
-  cnn_digit.s             CPU 自己运行的 shell / CNN / Pong 程序
+  soc_firmware.s          CPU 板端固件：自检 / shell / CNN / Pong / Paint
 
 scripts/
   serial_shell.py         PC 端串口终端 / 8x8 数字图像发送 / Pong 控制
@@ -101,7 +109,7 @@ xilinx.xise              ISE 14.7 工程
 ## 系统结构
 
 ```text
-TEC-PLUS 50MHz 时钟 / RESET
+TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 四分频后 SoC 运行于 12.5MHz）
         |
         v
 五级流水线 CPU
@@ -109,13 +117,14 @@ TEC-PLUS 50MHz 时钟 / RESET
         +-- I-Cache -- 片上指令 ROM
         |
         +-- 片上数据 RAM
+        +-- 双 HY57V2562 SDRAM (64 MiB)
         |
-        +-- MMIO LED / KEY
+        +-- MMIO LED / KEY / IRQ
         |
         +-- MMIO UART -- Python 终端
 ```
 
-当前 `top.v` 没有使用 SDRAM，也没有实例化 SDRAM 控制器。
+核心板的 U2/SH 与 U3/SL 均为 HY57V2562（4 Banks x 4M x 16 bit）。控制器让两片接收相同命令和地址，分别提供高/低 16 位，形成 64 MiB 的 32-bit 外部存储器。系统在 12.5 MHz 下使用 burst length 1、CAS latency 2、auto-precharge 和按时钟频率自动计算的周期刷新。
 
 ## 板端功能
 
@@ -126,24 +135,30 @@ TEC-PLUS 50MHz 时钟 / RESET
 片上指令 ROM / data RAM
 直接映射 I-Cache
 UART / LED / KEY MMIO
+双 HY57V2562 SDRAM 控制器
+UART RX / KEY 机器态外部中断
 RV32M 整数乘除法
 custom float32: FADD32 / FMUL32 / FGT32
 custom bit ops: POPCOUNT / BITREVERSE
 MNIST8 float32 数字推理程序
 CPU Pong 交互 demo
+SDRAM Paint 512x256 交互画布（128 KiB）
 ```
 
 CPU 端程序流程：
 
 ```text
-1. 复位后进入 CPU shell，显示 cpu> prompt
-2. shell 解析 help/status/mem/perf/led/cnn/pong 等命令
+1. 复位后执行 RV32I、分支、片内 RAM、RV32M、float32、自定义指令、CSR、SDRAM 开机自检
+2. shell 解析 help/status/irq/sdram/perf/led/cnn/pong/paint 等命令
 3. cnn 命令接收 PC 端发送的 8x8 二值数字图像
 4. CPU 从片上 data RAM 读取离线训练得到的 float32 权重和 bias
 5. CPU 使用 FADD32/FMUL32/FGT32 完成推理和 argmax
 6. pong 命令进入 CPU Pong，小球/挡板/得分状态由 RISC-V 指令计算
-7. 所有输出通过 UART_TX MMIO 打印，LED 显示预测值或 Pong 分数低 4 位
+7. paint 命令清零并读写 SDRAM 中的 512x256 字节画布，串口显示 16x8 视窗
+8. 所有输出通过 UART_TX MMIO 打印，LED 显示预测值或 Pong 分数低 4 位
 ```
+
+指令 ROM 容量为 2048 words（8 KiB）；数据 RAM 仍为 1024 words（4 KiB）。
 
 ## MMIO 地址
 
@@ -156,6 +171,19 @@ CPU 通过普通 `LW/SW` 访问外设：
 0x1008       UART_STAT  bit0=rx_pending, bit1=tx_busy
 0x100C       LED_OUT    写低 4 位控制 LED
 0x1010       KEY_IN     读 KEY1..KEY4，按下为 1
+0x1014       IRQ_ENABLE bit0=UART RX，bit1=KEY
+0x1018       IRQ_PENDING bit0=UART RX，bit1=KEY；写 1 清除
+0x101C       PERF_CYCLE     CPU cycle
+0x1020       PERF_INSTRET   退休指令数
+0x1024       PERF_BRANCH    条件分支数
+0x1028       PERF_FLUSH     流水线 flush 数
+0x102C       PERF_STALL     数据相关 stall 数
+0x1030       PERF_BP_MISS   分支预测错误数
+0x1034       PERF_MDU       乘除法指令数
+0x1038       ICACHE_HIT     I-Cache hit 数
+0x103C       ICACHE_MISS    I-Cache miss 数
+0x1040       SDRAM_STATUS   bit0=初始化完成，高 31 位为 refresh count
+0x10000000-0x13FFFFFF  双 HY57V2562 SDRAM，64 MiB
 ```
 
 ## 支持的指令
@@ -166,7 +194,8 @@ CPU 通过普通 `LW/SW` 访问外设：
 - 跳转分支：`BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`
 - 立即数：`LUI`, `AUIPC`
 - 乘除法：`MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`
-- 最小 CSR：`RDCYCLE`, `RDINSTRET`
+- CSR：`RDCYCLE`, `RDINSTRET`, `MSTATUS`, `MIE`, `MTVEC`, `MEPC`, `MCAUSE`, `MIP`
+- 中断返回：`MRET`
 - 系统停止：`ECALL`, `EBREAK`
 - 自定义：`POPCOUNT`, `BITREVERSE`, `FADD32`, `FMUL32`, `FGT32`
 
@@ -213,8 +242,8 @@ PIPELINE PASS
 顶层语法检查：
 
 ```bash
-iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
-  src/uart_tx.v src/uart_rx.v src/top.v
+iverilog -tnull src/riscv_pipeline_core.v src/sdram_controller.v \
+  src/icache_direct_mapped.v src/icache_2way.v src/uart_tx.v src/uart_rx.v src/top.v
 ```
 
 集成回归和指标展示：
@@ -223,12 +252,12 @@ iverilog -tnull src/riscv_pipeline_core.v src/icache_direct_mapped.v \
 python scripts/analyze.py
 ```
 
-当前应看到 10/10 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、自定义指令、CNN 推理和 shell/Pong 结果。
+当前应看到 15/15 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、中断、SDRAM、CNN 和 shell/Pong 结果。
 
 8x8 数字推理端到端仿真：
 
 ```bash
-iverilog -I src -o tb_cnn src/top.v src/riscv_pipeline_core.v \
+iverilog -I src -o tb_cnn src/top.v src/sdram_controller.v src/riscv_pipeline_core.v \
   src/icache_direct_mapped.v src/uart_rx.v src/uart_tx.v src/tb_cnn.v
 vvp tb_cnn
 ```
@@ -238,17 +267,28 @@ vvp tb_cnn
 CPU shell / Pong 端到端仿真：
 
 ```bash
-iverilog -I src -o tb_shell src/top.v src/riscv_pipeline_core.v \
+iverilog -I src -o tb_shell src/top.v src/sdram_controller.v src/riscv_pipeline_core.v \
   src/icache_direct_mapped.v src/uart_rx.v src/uart_tx.v src/tb_shell.v
 vvp tb_shell
 ```
 
 预期结果为 `SHELL PASS`。该测试通过真实 UART bit frame 发送 `h/s/m1/p/led a/pong/d/q`，验证 shell、性能计数器读取、LED MMIO 和 Pong 状态更新都在 CPU 端执行。
 
+SDRAM 与中断集成仿真：
+
+```bash
+iverilog -I src -o tb_soc_io src/top.v src/sdram_controller.v \
+  src/riscv_pipeline_core.v src/icache_direct_mapped.v src/icache_2way.v \
+  src/uart_rx.v src/uart_tx.v src/tb_soc_io.v
+vvp tb_soc_io
+```
+
+预期结果为 `SOC SDRAM/INTERRUPT PASS`。
+
 重新汇编 CNN 程序：
 
 ```bash
-python scripts/rvasm.py asm/cnn_digit.s --vh src/cnn_prog.vh
+python scripts/rvasm.py asm/soc_firmware.s --vh src/soc_firmware.vh
 ```
 
 综合功能演示程序：
@@ -324,7 +364,8 @@ python scripts/serial_shell.py -p COM5
 打开后会进入 CPU 串口 shell：
 
 ```text
-RV32 shell
+SELFTEST PASS
+RV32 shell 12M5 ODDR2 R12
 cpu>
 ```
 
@@ -333,14 +374,19 @@ cpu>
 ```text
 help 或 h       显示命令列表
 status 或 s     打印 CPU/串口状态
-mem N / mN      读取 data RAM word 0..3
-0 / 1 / 2 / 3   旧版短命令，读取对应 data RAM word
-perf 或 p       读取 cycle 计数器
+irq             打印 UART RX 和 KEY 中断次数
+sdram           对外部 SDRAM 写入并读回两组 32-bit 测试数据
+mem N / mN      读取固定自检结果 m0..m9（CNN 和游戏不会覆盖）
+0 / 1 / 2 / 3   `m0` 到 `m3` 的短命令
+perf 或 p       打印全部性能计数器、CPI、吞吐量和命中率
 ledX            设置 LED，X 为 0..f
 cnn             进入连续 8x8 数字推理，模式内 q 返回 shell
-pong            进入自动渲染的 CPU Pong，模式内 q 返回 shell
+pong            进入定时中断自动推进的 CPU Pong；a/d 移动，n 重开，q 返回（s 可单步）
+paint           进入 512x256 SDRAM 画布；wasd 移动，x/空格绘制，c 清空，q 返回
 q               在主 shell 中让板端程序进入 idle
 ```
+
+`sdram` 成功时输出 `SDRAM PASS 64MiB`。按下任一核心板 KEY 后输入 `irq`，`key` 计数应增加；UART 中断只在 Pong 模式启用，普通 shell、CNN 和 Paint 使用轮询输入。KEY 中断同时把计数低 4 位写到 LED。
 
 输入 `cnn` 后，Python 会循环提示选择 0-9 或图像路径；可连续推理，输入 `q` 才返回 CPU shell。也可以直接启动一次推理：
 
@@ -365,11 +411,13 @@ Python 会根据 CPU 输出的状态自动绘制 8x6 球场，不需要额外启
 Pong 控制：
 
 ```text
-a / d   移动挡板
-s 或空格 走一步
-n       重新开始
-q       退出 Pong，回到 CPU shell
+a / d    移动挡板
+s 或空格 调试时额外走一步
+n        重新开始
+q        退出 Pong，回到 CPU shell
 ```
+
+小球由 4 Hz 定时中断自动推进（每 250 ms 一格）；UART 接收中断缓存控制键，用户不需要连续按 `s`。
 
 如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
 
@@ -408,7 +456,7 @@ Python 会提示选择 `0-9`，并把 `data/mnist8_model.json` 中的 8x8 演示
 
 ## 8x8 数字推理说明
 
-数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、float32 推理、argmax 分类和结果输出都在 `asm/cnn_digit.s` 中，由 RISC-V CPU 执行。
+数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、float32 推理、argmax 分类和结果输出都在 `asm/soc_firmware.s` 中，由 RISC-V CPU 执行。
 
 模型由 `scripts/train_mnist8.py` 在电脑上离线训练：MNIST 28x28 图像先缩放并二值化为 8x8，再训练一个 `64 -> 10` 的 float32 线性分类器。训练脚本导出：
 
@@ -419,17 +467,33 @@ data/mnist8_model.json   Python 端演示模板和训练元数据
 
 当前硬件时序友好的非负 float32 权重和偏置，在板端逐位浮点模型上的测试集准确率为 `82.37%`。FPGA 上只运行推理，不进行训练。
 
-开机或复位后，CPU 先进入串口 shell：
+开机或复位后，CPU 先执行自检，再进入串口 shell：
 
 ```text
-RV32 shell
+SELFTEST PASS
+RV32 shell 12M5 ODDR2 R12
 cpu>
 ```
 
 shell 命令：
 
 ```text
-h/? s 0-3 mN p ledX cnn pong q
+h ver s m0-m9 irq sdram p ledX cnn pong paint q
+```
+
+自检通过时四个 LED 全亮。结果保存在不会被 CNN 或游戏覆盖的固定区域：
+
+```text
+m0 = 0x000000ff  RV32I 算术/逻辑/移位
+m1 = 0x00000037  分支循环求和 1+...+10
+m2 = 0x13579bdf  片内 RAM 写入读回
+m3 = 0x0000002a  MUL 7*6
+m4 = 0x00020001  DIVU/REMU 7/3（商:余数）
+m5 = 0x40000000  FADD32 1.0+1.0 = 2.0
+m6 = 0x40400000  FMUL32 1.5*2.0 = 3.0，同时检查 FGT32
+m7 = 0xff00b3d5  BITREVERSE，同时检查 POPCOUNT=18
+m8 = 非零          RDCYCLE/CSR
+m9 = 0x5aa5c33c  SDRAM 写入读回
 ```
 
 输入图像示例，`#` 表示像素 1，`.` 表示像素 0：
@@ -478,13 +542,21 @@ I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
 
 ## CPU Pong 说明
 
-Pong 不是 Python 端模拟的游戏。Python 只发送 `a/d/s/n/q` 按键，并把 CPU 状态行自动渲染成球场；CPU 在 `asm/cnn_digit.s` 中维护小球位置、速度、挡板、得分和 game-over 状态。每次输入后，CPU 输出一行状态：
+Pong 不是 Python 端模拟的游戏。CPU 使用 4 Hz 定时中断自动推进小球，UART 中断接收 `a/d/n/q`，Python 只发送按键并把 CPU 状态行渲染成球场。CPU 在 `asm/soc_firmware.s` 中维护小球位置、速度、挡板、得分和 game-over 状态，每次状态变化后输出一行：
 
 ```text
 P bx by pad over score
 ```
 
 例如 `P 4 2 3 0 0` 表示小球在 `(4,2)`，挡板左端在 `3`，未结束，得分为 `0`。该 demo 主要用于直观看到 UART RX/TX、分支、访存、算术、状态机和 LED MMIO 都由 CPU 指令驱动。
+
+## SDRAM Paint 说明
+
+输入 `paint` 后，CPU 会清零 `0x10000000` 开始的 131072 字节，并把它作为 512x256、每像素一字节的画布。XC6SLX9 有 72 KiB Block RAM 和最多约 11.25 KiB 分布式 RAM，理论片内存储总量仍小于这块 128 KiB 画布，因此该程序必须通过 SDRAM wait-state 总线完成清空、像素翻转和 16x8 视窗读取。
+
+CPU 每帧输出定长二进制包 `A5 44 83 <x_lo> <x_hi> <y> <128 cells>`，Python 只负责把它渲染成画面。`W/A/S/D` 移动光标，`X` 或空格翻转像素，`C` 清空画布，`Q` 返回 shell。端到端仿真会检查至少 32768 次 SDRAM 清零写入、128 次视窗读取以及绘制后的完整二进制帧。
+
+`p` 命令同样使用定长二进制包传送 9 个 32 位计数器，避免板端十六进制字符串被中断破坏。`serial_shell.py` 会为 cycle、instret、CPI、吞吐量、分支预测、stall、MDU 和 I-Cache 命中率加上标签并计算派生指标。
 
 ## 报告表述
 

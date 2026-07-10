@@ -10,7 +10,8 @@
 # - CSR read: RDCYCLE
 # - ECALL halt
 #
-# 当前 CPU 没有实现浮点数, 所以本程序不包含浮点指令。
+# 这是独立仿真用的早期整数测试程序。板端完整自检（包含 float32、
+# CSR 与 SDRAM）位于 asm/soc_firmware.s。
 #
 # 预期内存结果:
 # Mem[0]  = 42          # MUL 7*6
