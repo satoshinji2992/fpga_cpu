@@ -1,13 +1,14 @@
 //==================================================
-// tb_cnn.v — end-to-end UART verification of CPU 8x8 digit inference.
+// tb_cnn.v - end-to-end UART verification of all ten 8x8 digits.
 //
-// Sends "cnn\n" and one 8x8 digit template as real UART frames, then checks the
-// CPU prints "pred 7". Python does not participate in this test.
+// Each image enters through the real UART receiver. The CPU executes the
+// board inference program, prints "pred N", and writes N to the LEDs.
 //==================================================
 `timescale 1ns/1ps
 module tb_cnn;
     localparam integer CLKS_PER_BIT = 16;
-    localparam integer WAIT_CYCLES  = 20000;
+    localparam integer READY_CYCLES = 4000;
+    localparam integer PRED_TIMEOUT = 200000;
     localparam integer LOG_SIZE     = 4096;
 
     reg         clk = 1'b0;
@@ -62,6 +63,74 @@ module tb_cnn;
         end
     endtask
 
+    task send_image;
+        input integer digit;
+        begin
+            case (digit)
+                0: begin
+                    send_row("00111100"); send_row("00100100");
+                    send_row("00100100"); send_row("00100100");
+                    send_row("00100100"); send_row("00100100");
+                    send_row("00111100"); send_row("00000000");
+                end
+                1: begin
+                    send_row("00011000"); send_row("00111000");
+                    send_row("00011000"); send_row("00011000");
+                    send_row("00011000"); send_row("00011000");
+                    send_row("00111100"); send_row("00000000");
+                end
+                2: begin
+                    send_row("00111100"); send_row("00000100");
+                    send_row("00000100"); send_row("00011100");
+                    send_row("00100000"); send_row("00100000");
+                    send_row("00111110"); send_row("00000000");
+                end
+                3: begin
+                    send_row("00111100"); send_row("00000100");
+                    send_row("00000100"); send_row("00011100");
+                    send_row("00000100"); send_row("00000100");
+                    send_row("00111100"); send_row("00000000");
+                end
+                4: begin
+                    send_row("00100100"); send_row("00100100");
+                    send_row("00100100"); send_row("00111110");
+                    send_row("00000100"); send_row("00000100");
+                    send_row("00000100"); send_row("00000000");
+                end
+                5: begin
+                    send_row("00111110"); send_row("00100000");
+                    send_row("00100000"); send_row("00111100");
+                    send_row("00000100"); send_row("00000100");
+                    send_row("00111100"); send_row("00000000");
+                end
+                6: begin
+                    send_row("00111100"); send_row("00100000");
+                    send_row("00100000"); send_row("00111100");
+                    send_row("00100100"); send_row("00100100");
+                    send_row("00111100"); send_row("00000000");
+                end
+                7: begin
+                    send_row("00111110"); send_row("00000100");
+                    send_row("00001000"); send_row("00010000");
+                    send_row("00010000"); send_row("00100000");
+                    send_row("00100000"); send_row("00000000");
+                end
+                8: begin
+                    send_row("00111100"); send_row("00100100");
+                    send_row("00100100"); send_row("00111100");
+                    send_row("00100100"); send_row("00100100");
+                    send_row("00111100"); send_row("00000000");
+                end
+                9: begin
+                    send_row("00111100"); send_row("00100100");
+                    send_row("00100100"); send_row("00111110");
+                    send_row("00000100"); send_row("00000100");
+                    send_row("00111100"); send_row("00000000");
+                end
+            endcase
+        end
+    endtask
+
     always @(posedge clk) begin
         if (cap_valid && log_len < LOG_SIZE) begin
             log[log_len] = cap_data;
@@ -69,21 +138,50 @@ module tb_cnn;
         end
     end
 
-    function integer has_prediction7;
-        input integer unused;
+    function integer has_prediction;
+        input integer first;
+        input integer expected;
         integer ii;
         begin
-            has_prediction7 = 0;
-            for (ii = 0; ii + 5 < log_len; ii = ii + 1)
+            has_prediction = 0;
+            for (ii = first; ii + 5 < log_len; ii = ii + 1)
                 if (log[ii] == "p" && log[ii+1] == "r" && log[ii+2] == "e" &&
-                    log[ii+3] == "d" && log[ii+4] == " " && log[ii+5] == "7")
-                    has_prediction7 = 1;
+                    log[ii+3] == "d" && log[ii+4] == " " &&
+                    log[ii+5] == (8'h30 + expected))
+                    has_prediction = 1;
         end
     endfunction
 
+    task test_digit;
+        input integer digit;
+        integer first, cycles;
+        begin
+            first = log_len;
+            send_image(digit);
+            send_byte(8'h0A);
+
+            cycles = 0;
+            while (!has_prediction(first, digit) && cycles < PRED_TIMEOUT) begin
+                @(posedge clk);
+                cycles = cycles + 1;
+            end
+
+            if (!has_prediction(first, digit)) begin
+                $display("digit %0d FAIL: missing pred %0d", digit, digit);
+                fails = fails + 1;
+            end else if (led !== digit[3:0]) begin
+                $display("digit %0d FAIL: LED=%h", digit, led);
+                fails = fails + 1;
+            end else begin
+                $display("digit %0d PASS (%0d cycles)", digit, cycles);
+            end
+            repeat(READY_CYCLES) @(posedge clk);
+        end
+    endtask
+
     initial begin
         #200_000_000;
-        $display("CNN FAIL (timeout; log_len=%0d)", log_len);
+        $display("CNN FAIL (global timeout; log_len=%0d)", log_len);
         $finish;
     end
 
@@ -92,43 +190,22 @@ module tb_cnn;
         rst_n = 1'b0;
         repeat(20) @(posedge clk);
         rst_n = 1'b1;
+        repeat(20000) @(posedge clk);
 
-        repeat(WAIT_CYCLES) @(posedge clk);
-        send_byte("c");
-        send_byte("n");
-        send_byte("n");
-        send_byte(8'h0A);
-        repeat(WAIT_CYCLES) @(posedge clk);
+        send_byte("c"); send_byte("n"); send_byte("n"); send_byte(8'h0A);
+        repeat(READY_CYCLES * 3) @(posedge clk);
 
-        send_row("00000000");
-        send_row("00000000");
-        send_row("00111100");
-        send_row("00111100");
-        send_row("00001100");
-        send_row("00011000");
-        send_row("00011000");
-        send_row("00010000");
-        send_byte(8'h0A);
-        repeat(WAIT_CYCLES * 60) @(posedge clk);
+        for (i = 0; i < 10; i = i + 1)
+            test_digit(i);
+
+        send_byte("q"); send_byte(8'h0A);
+        repeat(READY_CYCLES) @(posedge clk);
 
         $display("captured %0d tx bytes", log_len);
-        if (!has_prediction7(0)) begin
-            $display("  missing pred 7");
-            fails = fails + 1;
-        end
-        if (led !== 4'h7) begin
-            $display("  LED mismatch: led=%h expected 7", led);
-            fails = fails + 1;
-        end
-
-        if (fails == 0) $display("CNN PASS");
-        else begin
-            $display("CNN FAIL (%0d missing)", fails);
-            $write("--- captured log preview ---\n");
-            for (i = 0; i < (log_len < 600 ? log_len : 600); i = i + 1)
-                $write("%c", log[i]);
-            $write("\n--- end preview ---\n");
-        end
+        if (fails == 0)
+            $display("CNN ALL-DIGIT PASS (10/10)");
+        else
+            $display("CNN ALL-DIGIT FAIL (%0d/10 failed)", fails);
         $finish;
     end
 endmodule

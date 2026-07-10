@@ -233,7 +233,7 @@ iverilog -I src -o tb_cnn src/top.v src/riscv_pipeline_core.v \
 vvp tb_cnn
 ```
 
-预期结果为 `CNN PASS`。该测试用真实 UART bit frame 向 FPGA 输入 `cnn` 命令和 8x8 数字图像，并捕获 CPU 通过 UART MMIO 打印的 `pred 7`。
+预期结果为 `CNN ALL-DIGIT PASS (10/10)`。该测试只进入一次 CNN 模式，再用真实 UART bit frame 连续发送 0-9 的十张 8x8 图像，检查每次预测和 LED，最后发送 `q` 返回 shell。
 
 CPU shell / Pong 端到端仿真：
 
@@ -337,12 +337,12 @@ mem N / mN      读取 data RAM word 0..3
 0 / 1 / 2 / 3   旧版短命令，读取对应 data RAM word
 perf 或 p       读取 cycle 计数器
 ledX            设置 LED，X 为 0..f
-cnn             进入 8x8 数字推理
-pong            进入 CPU Pong
-q               板端程序进入 idle
+cnn             进入连续 8x8 数字推理，模式内 q 返回 shell
+pong            进入自动渲染的 CPU Pong，模式内 q 返回 shell
+q               在主 shell 中让板端程序进入 idle
 ```
 
-输入 `cnn` 后，Python 会提示选择 0-9，并发送对应的 8x8 图像。也可以直接启动一次推理：
+输入 `cnn` 后，Python 会循环提示选择 0-9 或图像路径；可连续推理，输入 `q` 才返回 CPU shell。也可以直接启动一次推理：
 
 ```bash
 python scripts/serial_shell.py -p COM5 --cnn 7
@@ -354,11 +354,13 @@ python scripts/serial_shell.py -p COM5 --cnn 7
 python scripts/serial_shell.py -p COM5 --cnn 0 --image image.txt
 ```
 
-也可以直接启动 Pong：
+Pong 从交互 shell 进入：
 
-```bash
-python scripts/serial_shell.py -p COM5 --pong
+```text
+cpu> pong
 ```
+
+Python 会根据 CPU 输出的状态自动绘制 8x6 球场，不需要额外启动参数。
 
 Pong 控制：
 
@@ -366,7 +368,7 @@ Pong 控制：
 a / d   移动挡板
 s 或空格 走一步
 n       重新开始
-q       退出 Pong，回到 host shell
+q       退出 Pong，回到 CPU shell
 ```
 
 如果打开串口后没有看到 `cpu>`，按一次开发板 `RESET`，因为上电时打印的第一屏可能已经在串口打开前丢失。
@@ -415,7 +417,7 @@ src/cnn_weights.vh       FPGA data RAM 初始化，包含 weights[10][64] 和 bi
 data/mnist8_model.json   Python 端演示模板和训练元数据
 ```
 
-当前导出模型的测试集准确率约为 `82.45%`。FPGA 上只运行推理，不进行训练。
+当前硬件时序友好的非负 float32 权重和偏置，在板端逐位浮点模型上的测试集准确率为 `82.37%`。FPGA 上只运行推理，不进行训练。
 
 开机或复位后，CPU 先进入串口 shell：
 
@@ -476,7 +478,7 @@ I-Cache      推理循环从指令 ROM 取指，经 I-Cache 缓存
 
 ## CPU Pong 说明
 
-Pong 不是 Python 端模拟的游戏。Python 只发送 `a/d/s/n/q` 按键，CPU 在 `asm/cnn_digit.s` 中维护小球位置、速度、挡板、得分和 game-over 状态。每次输入后，CPU 输出一行状态：
+Pong 不是 Python 端模拟的游戏。Python 只发送 `a/d/s/n/q` 按键，并把 CPU 状态行自动渲染成球场；CPU 在 `asm/cnn_digit.s` 中维护小球位置、速度、挡板、得分和 game-over 状态。每次输入后，CPU 输出一行状态：
 
 ```text
 P bx by pad over score

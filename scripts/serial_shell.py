@@ -9,6 +9,7 @@ is only a UART terminal/client; command logic lives in asm/cnn_digit.s.
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -31,11 +32,44 @@ def list_serial_ports() -> None:
         print(f"{port.device}\t{port.description}")
 
 
+def render_pong_state(line: str) -> bool:
+    match = re.search(r"P ([0-7]) ([0-5]) ([0-5]) ([01]) ([0-9a-fA-F])$", line.strip())
+    if not match:
+        return False
+
+    ball_x, ball_y, paddle, game_over = (int(value) for value in match.groups()[:4])
+    score = int(match.group(5), 16)
+    rows = []
+    for y in range(6):
+        row = []
+        for x in range(8):
+            ball_here = x == ball_x and y == ball_y
+            paddle_here = y == 5 and paddle <= x <= paddle + 2
+            row.append("O" if ball_here else "=" if paddle_here else " ")
+        rows.append("|" + "".join(row) + "|")
+
+    if sys.stdout.isatty():
+        print("\033[2J\033[H", end="")
+    print("+--------+")
+    print("\n".join(rows))
+    print("+--------+")
+    print(f"score {score}" + ("  GAME OVER (n: new, q: exit)" if game_over else ""), flush=True)
+    return True
+
+
 def reader_thread(ser: serial.Serial, stop_flag: threading.Event) -> None:
+    line_buffer = ""
     while not stop_flag.is_set():
         data = ser.read(256)
         if data:
-            print(data.decode("ascii", errors="replace"), end="", flush=True)
+            text = data.decode("ascii", errors="replace")
+            print(text, end="", flush=True)
+            for char in text:
+                if char == "\n":
+                    render_pong_state(line_buffer.rstrip("\r"))
+                    line_buffer = ""
+                else:
+                    line_buffer += char
 
 
 def read_key() -> str:
@@ -124,8 +158,26 @@ def send_cnn_image_file(ser: serial.Serial, path: Path) -> None:
     send_pixels(ser, pixels, str(path))
 
 
+def cnn_control_loop(ser: serial.Serial) -> None:
+    print("[host] CNN mode: enter digit 0-9 or an 8x8 image path; q returns to CPU shell.")
+    time.sleep(0.1)
+    while True:
+        value = input("cnn> ").strip()
+        if value.lower() == "q":
+            ser.write(b"q\n")
+            time.sleep(0.2)
+            return
+        if value.isdigit() and 0 <= int(value) <= 9:
+            send_cnn_digit(ser, int(value))
+        else:
+            try:
+                send_cnn_image_file(ser, Path(value))
+            except Exception as exc:
+                print(f"[host] skipped: {exc}")
+
+
 def pong_control_loop(ser: serial.Serial) -> None:
-    print("[host] Pong controls: a/d move, s or Space step, n new, q back to host shell.")
+    print("[host] Pong controls: a/d move, s or Space step, n new, q back to CPU shell.")
     while True:
         ch = read_key().lower()
         if ch in ("\x03", "\x04"):
@@ -164,14 +216,7 @@ def shell_mode(args: argparse.Namespace) -> int:
                 continue
             ser.write((line + "\n").encode("ascii", errors="ignore"))
             if cmd in ("c", "cnn"):
-                digit_text = input("[host] digit 0-9 or image path > ").strip()
-                if digit_text.isdigit() and 0 <= int(digit_text) <= 9:
-                    send_cnn_digit(ser, int(digit_text))
-                else:
-                    try:
-                        send_cnn_image_file(ser, Path(digit_text))
-                    except Exception as exc:
-                        print(f"[host] skipped: {exc}")
+                cnn_control_loop(ser)
             elif cmd == "pong":
                 pong_control_loop(ser)
     except KeyboardInterrupt:
@@ -199,28 +244,8 @@ def cnn_mode(args: argparse.Namespace) -> int:
     else:
         send_cnn_digit(ser, args.cnn)
     time.sleep(1.0)
-
-    stop_flag.set()
-    thread.join(timeout=0.2)
-    ser.close()
-    return 0
-
-
-def pong_mode(args: argparse.Namespace) -> int:
-    ser = open_serial(args)
-    stop_flag = threading.Event()
-    thread = threading.Thread(target=reader_thread, args=(ser, stop_flag), daemon=True)
-    thread.start()
-
-    print(f"Connected to {args.port} at {args.baud} baud.")
-    print("Starting CPU Pong demo.")
+    ser.write(b"q\n")
     time.sleep(0.2)
-    ser.write(b"pong\n")
-    time.sleep(0.2)
-    try:
-        pong_control_loop(ser)
-    except KeyboardInterrupt:
-        pass
 
     stop_flag.set()
     thread.join(timeout=0.2)
@@ -237,8 +262,6 @@ def main() -> int:
                         help="Start CNN inference immediately with a template digit 0-9")
     parser.add_argument("--image", type=Path, metavar="FILE",
                         help="With --cnn, send an 8x8 #/. or 1/0 text image instead of a prototype")
-    parser.add_argument("--pong", action="store_true",
-                        help="Start CPU Pong immediately and use keyboard controls")
     args = parser.parse_args()
 
     if args.list:
@@ -250,8 +273,6 @@ def main() -> int:
         parser.error("--image must be used together with --cnn DIGIT; DIGIT is only a label/start trigger")
     if args.cnn is not None:
         return cnn_mode(args)
-    if args.pong:
-        return pong_mode(args)
     return shell_mode(args)
 
 

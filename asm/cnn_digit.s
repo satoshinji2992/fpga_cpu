@@ -329,12 +329,15 @@ print_perf:
 
 # =============================================================== cnn_start
 cnn_start:
+    .puts "cnn 0-9/image, q exits\n"
+cnn_loop:
     .puts "pixels64\n"
     jal  ra, recv_image
+    bnez a0, shell_loop
     jal  ra, infer_digit
-    j    shell_loop
+    j    cnn_loop
 
-# =============================================================== recv_image()
+# =============================================================== recv_image() -> a0 (1=q, 0=image)
 recv_image:
     addi sp, sp, -8
     sw   ra, 0(sp)
@@ -346,6 +349,10 @@ ri_loop:
     beq  a0, t1, ri_loop
     li   t1, 0x0D
     beq  a0, t1, ri_loop
+    bnez s0, ri_pixel
+    li   t1, 'q'
+    beq  a0, t1, ri_quit
+ri_pixel:
     li   t2, 0
     li   t1, '0'
     beq  a0, t1, ri_store
@@ -357,6 +364,18 @@ ri_store:
     addi s0, s0, 1
     li   t1, 64
     blt  s0, t1, ri_loop
+    li   a0, 0
+    j    ri_return
+ri_quit:
+    # Consume q's trailing newline before returning to the normal shell.
+    jal  ra, read_key
+    li   t1, 0x0A
+    beq  a0, t1, ri_quit_done
+    li   t1, 0x0D
+    bne  a0, t1, ri_quit
+ri_quit_done:
+    li   a0, 1
+ri_return:
     lw   ra, 0(sp)
     lw   s0, 4(sp)
     addi sp, sp, 8
