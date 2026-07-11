@@ -7,7 +7,7 @@ I-Cache命中率 / RV32M乘除法 / 自定义指令, 并对照课程设计要求
 全部在电脑上用 Icarus Verilog 运行, 不需要 FPGA 开发板。
 用法:  py -3 scripts/analyze.py      (或 python scripts/analyze.py)
 """
-import subprocess, re, os, sys, shutil, tempfile
+import subprocess, re, os, sys, shutil, tempfile, shlex
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -16,6 +16,7 @@ except Exception:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC  = os.path.join(HERE, "..", "src")
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
 
 # ---------------- toolchain discovery ----------------
 def find_tools():
@@ -31,6 +32,17 @@ def find_tools():
         vv = (shutil.which("vvp") or shutil.which("vvp.exe")
               or os.path.join(os.path.dirname(iv), "vvp.exe"))
     return iv, vv
+
+def retry_under_wsl():
+    if os.name != "nt" or not shutil.which("wsl.exe"):
+        return None
+    cp = subprocess.run(["wsl.exe", "-e", "wslpath", "-a", ROOT],
+                        capture_output=True, text=True)
+    if cp.returncode != 0:
+        return None
+    wsl_root = cp.stdout.strip()
+    cmd = "cd %s && python3 scripts/analyze.py" % shlex.quote(wsl_root)
+    return subprocess.run(["wsl.exe", "-e", "sh", "-lc", cmd]).returncode
 
 def run_tb(iv, vv, srcs, label):
     out = os.path.join(tempfile.gettempdir(), "fpgacpu_%s.out" % label)
@@ -52,6 +64,9 @@ def bar(pct, w=36):
 def main():
     iv, vv = find_tools()
     if not iv:
+        wsl_rc = retry_under_wsl()
+        if wsl_rc is not None:
+            sys.exit(wsl_rc)
         print("[ERROR] 找不到 iverilog。请安装 Icarus Verilog 并加入 PATH,")
         print("        或放到 D:/iverilog/bin (本机默认安装路径)。")
         sys.exit(1)
@@ -63,6 +78,7 @@ def main():
         ("load-use",      ["riscv_pipeline_core.v", "tb_loaduse.v"]),
         ("branchpredict", ["riscv_pipeline_core.v", "tb_branchpredict.v"]),
         ("muldiv",        ["riscv_pipeline_core.v", "tb_muldiv.v"]),
+        ("muldiv-edges",  ["riscv_pipeline_core.v", "tb_muldiv_edges.v"]),
         ("float",         ["riscv_pipeline_core.v", "tb_float.v"]),
         ("custom",        ["riscv_pipeline_core.v", "tb_custom.v"]),
         ("all-features",  ["riscv_pipeline_core.v", "tb_all_features.v"]),
@@ -156,7 +172,7 @@ def main():
         print("    2路组相联 + LRU:  命中率 %5.1f%%  hit=%s miss=%s  %s" % (tr, tw.group(1), tw.group(2), bar(tr)))
 
     # 6. RV32M
-    print("\n[6] RV32M 乘除法扩展 (单周期组合实现)")
+    print("\n[6] RV32M 乘除法扩展 (迭代式多周期实现)")
     md = res["muldiv"][0]
     m0 = grab(r"Mem\[0\] = (\d+)", md, int)
     m1 = grab(r"Mem\[1\] = (\d+)", md, int)
@@ -187,9 +203,17 @@ def main():
 
     # 9. requirement coverage
     print("\n[9] 课程设计要求覆盖 (对照图片需求清单)")
-    ppa_reports_exist = (os.path.exists(os.path.join(HERE, "..", "top.par")) and
-                         os.path.exists(os.path.join(HERE, "..", "top.twr")) and
-                         os.path.exists(os.path.join(HERE, "..", "top.pwr")))
+    report_paths = [os.path.join(ROOT, name) for name in ("top.par", "top.twr")]
+    power_path = os.path.join(ROOT, "top.pwr")
+    ppa_reports_exist = all(os.path.exists(path) for path in report_paths)
+    source_paths = ([os.path.join(ROOT, "src", name) for name in os.listdir(SRC)
+                     if name.endswith((".v", ".vh", ".ucf"))] +
+                    [os.path.join(ROOT, "asm", "soc_firmware.s")])
+    source_mtime = max(os.path.getmtime(path) for path in source_paths)
+    ppa_reports_fresh = ppa_reports_exist and all(
+        os.path.getmtime(path) >= source_mtime for path in report_paths)
+    power_report_fresh = (os.path.exists(power_path) and
+                          os.path.getmtime(power_path) >= source_mtime)
     cov = [
         ("进阶: CPU + 内存 + Cache + I/O 系统集成",            True),
         ("进阶: 小型测试程序完整运行",                         npass == len(TBS)),
@@ -200,15 +224,18 @@ def main():
         ("拓展: 乘除法扩展指令 (RV32M)",                       ok_m),
         ("拓展: 浮点运算扩展指令 (custom float32)",             ok_f),
         ("拓展: 自定义 ISA 扩展设计",                          ok_c),
-        ("PPA 权衡分析 (面积/功耗/频率)",                      ppa_reports_exist),
+        ("PPA 权衡分析 (面积/功耗/频率)",                      ppa_reports_fresh),
     ]
     for name, ok in cov:
         print("    [%s] %s" % ("x" if ok else " ", name))
 
     print("\n" + "=" * 66)
     print(" 回归: %d/%d testbench 通过" % (npass, len(TBS)))
-    if ppa_reports_exist:
-        print(" PPA: 已发现 top.par/top.twr/top.pwr；面积/时序/功耗已按当前 ISE/XPower 报告记录")
+    if ppa_reports_fresh:
+        print(" PPA: 当前 RTL 的面积/时序报告有效；功耗报告%s" %
+              ("有效" if power_report_fresh else "仍是旧版本，请重新运行 XPower"))
+    elif ppa_reports_exist:
+        print(" PPA: 报告早于当前 RTL/UCF，属于旧版本；请重新运行 ISE/XPower")
     else:
         print(" PPA (面积/功耗/Fmax) 需在本地 ISE 14.7 综合后填入报告或 README")
     print("=" * 66)

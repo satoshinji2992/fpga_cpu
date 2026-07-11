@@ -33,6 +33,15 @@ def resource_line(label, text):
 
 
 def main():
+    implementation_paths = [ROOT / name for name in ("top.par", "top.twr")]
+    power_path = ROOT / "top.pwr"
+    source_paths = list((ROOT / "src").glob("*.v")) + list((ROOT / "src").glob("*.vh"))
+    source_paths += [ROOT / "src" / "top.ucf", ROOT / "asm" / "soc_firmware.s"]
+    source_mtime = max(path.stat().st_mtime for path in source_paths if path.exists())
+    implementation_stale = (not all(path.exists() for path in implementation_paths) or
+                            min(path.stat().st_mtime for path in implementation_paths if path.exists()) <
+                            source_mtime)
+    power_stale = not power_path.exists() or power_path.stat().st_mtime < source_mtime
     par = read("top.par")
     twr = read("top.twr")
     pwr = read("top.pwr")
@@ -50,7 +59,9 @@ def main():
     fmax = find(r"Maximum frequency:\s+([0-9.]+MHz)", twr)
     system_period = find(r"TS_sys_clk.*?\n\s+([0-9.]+\s+ns)\s+HIGH", par, flags=re.S)
     if system_period == "NA":
-        system_period = "40 ns"
+        system_period = find(r"Timing constraint:\s+TS_clk.*?([0-9.]+\s+ns)\s+HIGH", twr)
+    if system_period == "NA":
+        system_period = "20 ns"
     input_period = find(r"TS_clk.*?\n\s+([0-9.]+\s+ns)\s+H", par, flags=re.S)
     if input_period == "NA":
         input_period = "20 ns"
@@ -79,6 +90,10 @@ def main():
     ]
 
     print("# PPA Summary\n")
+    if implementation_stale:
+        print("> WARNING: ISE implementation reports are older than the current RTL/UCF.\n")
+    if power_stale:
+        print("> WARNING: XPower report is older than the current RTL/UCF; power values are stale.\n")
     print("| Resource | Used | Available | Utilization |")
     print("|---|---:|---:|---:|")
     for name, used, avail, util in rows:

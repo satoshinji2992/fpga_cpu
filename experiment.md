@@ -1,37 +1,37 @@
 # 项目进度与验证记录
 
-更新日期：2026-07-10
+更新日期：2026-07-11
 
 ## 当前基线
 
 | 项目 | 当前状态 |
 |---|---|
-| 硬件版本标识 | `R13` |
-| SoC 工作频率 | `25 MHz`（TEC-PLUS 50 MHz 输入经 BUFG 二分频） |
+| 硬件版本标识 | `R14` |
+| SoC 工作频率 | `50 MHz`（TEC-PLUS 50 MHz 输入经 BUFG，单一时钟域） |
 | FPGA | Xilinx Spartan-6 `XC6SLX9-2FTG256` |
 | 板端固件 | `asm/soc_firmware.s` -> `src/soc_firmware.vh` |
 | 串口 | 115200 baud，8N1 |
-| 完整仿真回归 | `15/15 PASS` |
-| 当前板端结论 | Shell、SDRAM、CNN、Pong、Paint 和性能读取可用；R13 组合开机自检待重新烧录复测 |
+| 完整仿真回归 | `16/16 PASS` |
+| 当前板端结论 | R14 尚未生成并烧录 bitstream；现有真板现象仅属于 R11/R12，不能外推到 R14 |
 
 当前构建标识：
 
 ```text
-build 25M ALL-SELFTEST FIXED-PRINT IRQ-PONG R13
+build 50M ALL-SELFTEST SYNC-BRAM50 IRQ-PONG R14
 ```
 
 ## 功能进度
 
 | 功能 | 状态 | 验证情况 |
 |---|---|---|
-| RV32I 五级流水线 | 已完成 | 基础、自相关、load-use、分支回归通过 |
-| RV32M | 已完成 | `MUL/DIVU/REMU` 仿真通过，板端程序可运行 |
+| RV32I 五级流水线 | 已完成 | 同步取指空拍可正确注入 bubble，基础、自相关、load-use、分支回归通过 |
+| RV32M | 已完成 | MUL 系列改为 32 拍迭代乘法，DIV/REM 保持多周期；回归通过 |
 | Custom Float32 | 已完成 | `FADD32/FMUL32/FGT32` 仿真通过，用于数字推理 |
 | 自定义位操作 | 已完成 | `POPCOUNT/BITREVERSE` 回归通过 |
 | 冒险处理 | 已完成 | 前递、load-use 停顿、分支冲刷已验证 |
 | 动态分支预测 | 已完成 | 16-entry 2-bit BHT，专用回归通过 |
 | I-Cache | 已完成 | 直接映射与 2 路组相联版本均有测试 |
-| 片内存储 | 已完成 | 8 KiB 指令 ROM、4 KiB 数据 RAM |
+| 片内存储 | RTL 已同步化 | 8 KiB 同步指令 ROM、4 KiB 同步字节写数据 RAM；BRAM 推断待 ISE 确认 |
 | 外部 SDRAM | 已完成 | 64 MiB，板端命令返回 `SDRAM PASS 64MiB` |
 | UART/LED/KEY | 已完成 | MMIO 与串口 shell 可用 |
 | 中断系统 | 已完成 | 最小机器态 CSR、`MRET`、UART/KEY/定时中断 |
@@ -39,12 +39,12 @@ build 25M ALL-SELFTEST FIXED-PRINT IRQ-PONG R13
 | 数字识别 | 已完成 | CPU 执行 8x8、64->10 float32 推理，串口连续交互 |
 | Pong | 已完成 | 定时中断自动推进，UART 中断接收 `a/d` |
 | SDRAM Paint | 已完成 | 512x256、128 KiB 画布，必须访问 SDRAM |
-| 十项组合开机自检 | 待板端复测 | 仿真通过；R12 真板曾失败，R13 已修复固定格式输出但尚未取得复测结果 |
-| 当前 PPA | 已刷新 | ISE/PAR/Timing/XPower 已更新；25 MHz 系统时钟约束通过 |
+| 十项组合开机自检 | 待板端复测 | R14 仿真通过；需新 bitstream 验证 |
+| 当前 PPA | 已刷新 | R14 50 MHz面积、时序和XPower功耗均已记录 |
 
-## R13 PPA 结果
+## R13 PPA Baseline
 
-PPA 数据来自 2026-07-10 重新实现后的 ISE 14.7 报告：
+以下数据来自 2026-07-10 的 R13 25 MHz ISE 14.7 报告，仅用于与 R14 对比：
 
 | 指标 | 报告文件 |
 |---|---|
@@ -97,7 +97,42 @@ PPA 结论：
 | Performance | 当前 `25 MHz` 系统时钟约束通过，静态时序最高约 `31.689 MHz` |
 | Power | XPower 粗略估计总功耗 `44.09 mW`，confidence 为 `Medium` |
 
-## R13 仿真回归
+## R14 50 MHz PPA
+
+R14于2026-07-11完成ISE 14.7布局布线和XPower分析，数据来自当前`top.par/top.twr/top.pwr`。
+
+| 资源 | R13 baseline | R14 | 变化 |
+|---|---:|---:|---:|
+| Slice Registers | `2,063`（18%） | `2,573`（22%） | `+510` |
+| Slice LUTs | `5,073`（88%） | `4,397`（76%） | `-676`，降低12 pct |
+| Occupied Slices | `1,416`（99%） | `1,330`（93%） | `-86`，降低6 pct |
+| RAMB16BWER | `0` | `4`（12%） | 指令ROM映射到BRAM |
+| RAMB8BWER | `2`（3%） | `6`（9%） | 四路数据RAM映射到BRAM |
+| DSP48A1 | `8`（50%） | `0` | 组合乘法改为迭代逻辑 |
+| BUFG | `2` | `1` | 取消逻辑分频时钟 |
+
+| 时序指标 | R14结果 |
+|---|---:|
+| 系统时钟约束 | `20 ns`（50 MHz） |
+| Best achievable period | `19.216 ns` |
+| Maximum frequency | `52.040 MHz` |
+| Worst setup slack | `+0.784 ns` |
+| Timing errors / score | `0 / 0` |
+| 约束结果 | `All constraints met` |
+
+XST确认`2048x32`指令ROM和四个`1024x8`数据RAM均实现为Block RAM。最终关键路径不再经过DSP级联，而是EX前递/ALU结果选择路径。50 MHz在ISE慢速角模型下具有正裕量，但裕量小于最初2 ns理想目标，仍需真板连续自检验证。
+
+| 功耗指标 | R13 baseline | R14 50 MHz |
+|---|---:|---:|
+| Total supply power | `44.09 mW` | `90.56 mW` |
+| Dynamic power | `29.38 mW` | `75.46 mW` |
+| Static power | `14.71 mW` | `15.10 mW` |
+| Junction temperature | - | `27.9 C` |
+| XPower confidence | `Medium` | `Medium` |
+
+R14动态功耗增加与系统时钟从25 MHz提高到50 MHz有关。XPower未加载SAIF/VCD活动文件，节点翻转率来自vector-less传播和默认值，因此该结果只用于版本间粗略PPA比较，不作为实测板级功耗。
+
+## R14 仿真回归
 
 运行命令：
 
@@ -105,7 +140,7 @@ PPA 结论：
 python scripts/analyze.py
 ```
 
-2026-07-10 的完整结果为 `15/15 testbench PASS`：
+使用 WSL Icarus Verilog 12.0 重新运行，完整结果为 `16/16 testbench PASS`：
 
 | Testbench | 覆盖内容 |
 |---|---|
@@ -113,6 +148,7 @@ python scripts/analyze.py
 | `load-use` | Load-use 停顿 |
 | `branchpredict` | 动态分支预测 |
 | `muldiv` | RV32M 乘除法 |
+| `muldiv-edges` | RV32M高半积、符号、无符号、除零与溢出边界 |
 | `float` | Custom Float32 |
 | `custom` | 自定义位操作 |
 | `all-features` | 指令综合测试 |
@@ -131,14 +167,16 @@ python scripts/analyze.py
 |---|---:|---:|---:|
 | 分支预测微基准 CPI | `1.57` | `1.14` | 降低 `27.4%` |
 | 分支预测微基准准确率 | - | `80.0%` | 误预测 `2` 次 |
-| CNN 端到端 cycle | `34591` | `32735` | 降低 `5.4%` |
-| CNN 端到端 CPI | `1.905` | `1.355` | 明显降低 |
-| CNN 分支预测准确率 | `8.39%` | `95.43%` | 提高 `87.04` pct |
-| I-Cache 冲突流命中率 | `68.4%` | `94.7%` | 提高 `26.3` pct |
+| CNN 端到端 cycle | `71761` | `67276` | 降低 `6.2%` |
+| CNN 端到端 CPI | `3.081` | `2.308` | 降低 `25.1%` |
+| CNN 分支预测准确率 | `6.43%` | `96.25%` | 提高 `89.82` pct |
+| I-Cache 冲突流命中率 | `0.0%` | `83.3%` | 提高 `83.3` pct |
+
+R14 的周期数包含同步取指/数据 RAM 延迟以及迭代式 FMUL，因此不能直接与 R13 的周期数比较。按目标频率换算，R14 CNN 预测路径约为 `67276 / 50 MHz = 1.346 ms`；R13 记录为 `32735 / 25 MHz = 1.309 ms`。当前重构首先换取时序可实现性和稳定性，性能是否改善需以新的 ISE Fmax 与真板测量为准。
 
 ## 真板验证记录
 
-已经观察到的有效现象：
+旧版 R11/R12 已经观察到的有效现象（不是 R14 验收结果）：
 
 - `sdram` 返回 `SDRAM PASS 64MiB`。
 - `cnn` 可连续接收 8x8 图像并返回预测结果。
@@ -163,11 +201,11 @@ R12 在 12.5 MHz 下取得的一次真板累计性能快照：
 | I-Cache hit / miss | `729764955 / 105284` |
 | I-Cache 命中率 | `99.99%` |
 
-该数据是从复位开始的累计值，包含串口轮询和人工等待，只用于证明实机性能观测链路有效，不能当作单一程序的基准成绩。当前 R13 已恢复为 25 MHz，不能直接沿用上表计算 R13 的实机吞吐量。
+该数据是从复位开始的累计值，包含串口轮询和人工等待，只用于证明旧版本实机性能观测链路有效，不能当作 R14 基准成绩。
 
 ## 开机自检布局
 
-R13 设计了十个互不覆盖的结果槽：
+R14 保留十个互不覆盖的结果槽：
 
 ```text
 m0  RV32I 算术、逻辑与移位
@@ -182,28 +220,28 @@ m8  CSR / RDCYCLE
 m9  SDRAM 写回
 ```
 
-R13 把十六进制输出改成固定展开的无栈打印，目的是隔离此前 `mN` 乱码和组合自检输出异常。尚未取得 R13 重新烧录后的 `ver`、`s`、`m0..m9` 完整记录，因此不能把板端组合自检标记为通过。
+十六进制输出继续使用固定展开的无栈打印。尚未取得 R14 bitstream 的 `ver`、`s`、`m0..m9` 完整记录，因此不能把板端组合自检标记为通过。
 
 ## 已知问题
 
 1. R12 的主应用均可工作，但组合开机自检曾出现 `FAIL MUL`、`FAIL RAM` 等不稳定结果；这说明问题不只是工作频率，也可能与自检执行顺序或输出例程有关。
-2. R13 已通过全部仿真并修复固定格式输出，ISE 实现和时序已通过；仍需要重新烧录验证板端组合自检。
+2. R14 已通过全部 RTL 仿真并修复原有 `DIVU/REMU` 高位无符号数被错误取绝对值的问题，但 ISE 50 MHz实现、门级时序仿真和真板自检尚未完成。
 3. 当前“CNN”是 8x8 输入上的 `64 -> 10` float32 线性分类器，没有卷积层；它用于展示 CPU 浮点推理链路，不应写成完整卷积神经网络。
 4. 系统没有 MMU、特权级和操作系统启动链，因此不是可运行 Linux 的完整通用 SoC。
-5. R13 的 PPA 已刷新；当前剩余风险集中在板端组合开机自检复测。
+5. R14 PPA已刷新，但XPower为无SAIF的Medium-confidence估算。
 
 ## 下一步
 
-1. 烧录最新 R13 bitstream。
-2. 依次记录 `ver`、`s`、`m0` 到 `m9`，确认组合自检和 LED 状态。
-3. 若仍失败，按第一个错误槽定位，不再同时修改频率、打印和应用逻辑。
-4. 若板端复测修改了 RTL，再重新导出 Map、PAR、Timing 和功耗报告并更新 PPA。
-5. 保存最终串口、LED、ISE 和开发板照片，替换报告中的占位截图。
+1. 使用 ISE 14.7 完成 R14 XST、Map、PAR 和 bitstream，确认同步存储映射到 BRAM。
+2. 检查 20 ns约束、未应用约束和未约束路径，并运行布局布线后门级时序仿真。
+3. 烧录后依次记录 `ver`、`s`、`m0` 到 `m9`，确认组合自检和 LED 状态。
+4. 若仍失败，按第一个错误槽定位，不再同时修改频率、打印和应用逻辑。
+5. 保存最终串口、LED、ISE 和开发板照片。
 
 ## 最终验收标准
 
-- `python scripts/analyze.py` 显示 `15/15 PASS`。
-- 真板 `ver` 显示 R13，`s` 与 `m0..m9` 结果完整且稳定。
+- `python scripts/analyze.py` 显示 `16/16 PASS`。
+- 真板 `ver` 显示 R14，`s` 与 `m0..m9` 结果完整且稳定。
 - `sdram`、`irq`、`p` 可重复执行且输出格式正确。
 - `cnn`、`pong`、`paint` 均可进入、交互并退出回 shell。
-- ISE 能生成 bitstream，R13 的资源、时序和功耗数据已补齐。
+- ISE 能生成 bitstream，20 ns约束通过且 R14 的资源、时序和功耗数据已补齐。

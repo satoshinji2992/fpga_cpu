@@ -120,5 +120,3 @@ NET "sl_db<15>" LOC = E16 | IOSTANDARD = LVCMOS33;
 #----------------------------------------------
 NET "clk" TNM_NET = "clk_grp";
 TIMESPEC TS_clk = PERIOD "clk_grp" 20 ns HIGH 50%;
-NET "clk_div2" TNM_NET = "sys_clk_grp";
-TIMESPEC TS_sys_clk = PERIOD "sys_clk_grp" 40 ns HIGH 50%;

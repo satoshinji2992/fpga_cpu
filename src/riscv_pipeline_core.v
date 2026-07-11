@@ -91,35 +91,6 @@ module riscv_pipeline_core #(
     // They handle zero, normalized numbers, signs, and truncating normalization.
     // NaN/Inf/subnormal/rounding-mode/exception flags are intentionally omitted:
     // this is a custom lightweight float datapath, not full RV32F.
-    function [31:0] fmul32;
-        input [31:0] a;
-        input [31:0] b;
-        reg sign;
-        reg [7:0] ea, eb;
-        reg [8:0] er;
-        reg [23:0] ma, mb;
-        reg [47:0] prod;
-        begin
-            sign = a[31] ^ b[31];
-            ea = a[30:23];
-            eb = b[30:23];
-            if ((a[30:0] == 31'b0) || (b[30:0] == 31'b0)) begin
-                fmul32 = 32'b0;
-            end else begin
-                ma = {1'b1, a[22:0]};
-                mb = {1'b1, b[22:0]};
-                prod = ma * mb;
-                er = {1'b0, ea} + {1'b0, eb} - 9'd127;
-                if (prod[47]) begin
-                    er = er + 9'd1;
-                    fmul32 = {sign, er[7:0], prod[46:24]};
-                end else begin
-                    fmul32 = {sign, er[7:0], prod[45:23]};
-                end
-            end
-        end
-    endfunction
-
     function fgt32_bit;
         input [31:0] a;
         input [31:0] b;
@@ -467,6 +438,67 @@ module riscv_pipeline_core #(
         end
     end
 
+    // Lightweight float32 multiply with an iterative 24-bit mantissa product.
+    reg         fmul_running;
+    reg [4:0]   fmul_cnt;
+    reg [47:0]  fmul_acc;
+    reg [47:0]  fmul_multiplicand;
+    reg [23:0]  fmul_multiplier;
+    reg [8:0]   fmul_exp;
+    reg         fmul_sign;
+    reg [31:0]  fmul_result;
+    reg         fmul_done;
+    wire        fmul_req = idex_valid && (idex_alu_ctrl == ALU_FMUL32);
+    wire        fmul_stall = fmul_req && !fmul_done;
+    wire [47:0] fmul_product_next = fmul_acc +
+                                    (fmul_multiplier[0] ? fmul_multiplicand : 48'd0);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fmul_running      <= 1'b0;
+            fmul_cnt          <= 5'd0;
+            fmul_acc          <= 48'd0;
+            fmul_multiplicand <= 48'd0;
+            fmul_multiplier   <= 24'd0;
+            fmul_exp          <= 9'd0;
+            fmul_sign         <= 1'b0;
+            fmul_result       <= 32'd0;
+            fmul_done         <= 1'b0;
+        end else begin
+            fmul_done <= 1'b0;
+            if (!fmul_running) begin
+                if (fmul_req && !fmul_done) begin
+                    if ((ex_rs1_value[30:0] == 31'd0) ||
+                        (ex_rs2_value[30:0] == 31'd0)) begin
+                        fmul_result <= 32'd0;
+                        fmul_done   <= 1'b1;
+                    end else begin
+                        fmul_running      <= 1'b1;
+                        fmul_cnt          <= 5'd0;
+                        fmul_acc          <= 48'd0;
+                        fmul_multiplicand <= {24'd0, 1'b1, ex_rs1_value[22:0]};
+                        fmul_multiplier   <= {1'b1, ex_rs2_value[22:0]};
+                        fmul_exp          <= {1'b0, ex_rs1_value[30:23]} +
+                                             {1'b0, ex_rs2_value[30:23]} - 9'd127;
+                        fmul_sign         <= ex_rs1_value[31] ^ ex_rs2_value[31];
+                    end
+                end
+            end else if (fmul_cnt == 5'd23) begin
+                if (fmul_product_next[47])
+                    fmul_result <= {fmul_sign, (fmul_exp[7:0] + 1'b1), fmul_product_next[46:24]};
+                else
+                    fmul_result <= {fmul_sign, fmul_exp[7:0], fmul_product_next[45:23]};
+                fmul_done    <= 1'b1;
+                fmul_running <= 1'b0;
+            end else begin
+                fmul_acc          <= fmul_product_next;
+                fmul_multiplicand <= fmul_multiplicand << 1;
+                fmul_multiplier   <= fmul_multiplier >> 1;
+                fmul_cnt          <= fmul_cnt + 1'b1;
+            end
+        end
+    end
+
     reg [31:0] ex_alu_result;
     always @(*) begin
         case (idex_alu_ctrl)
@@ -483,32 +515,35 @@ module riscv_pipeline_core #(
             ALU_POPCOUNT: ex_alu_result = popcount(ex_alu_src1);     // Stage 5
             ALU_BITREV:   ex_alu_result = bitreverse(ex_alu_src1);   // Stage 5
             ALU_FADD32:   ex_alu_result = fadd_result;
-            ALU_FMUL32:   ex_alu_result = fmul32(ex_alu_src1, ex_rs2_value);
+            ALU_FMUL32:   ex_alu_result = fmul_result;
             ALU_FGT32:    ex_alu_result = {31'b0, fgt32_bit(ex_alu_src1, ex_rs2_value)};
             default:      ex_alu_result = 32'b0;
         endcase
     end
 
-    // Stage 4: RV32M. One sign-configurable multiplier is shared by all four
-    // MUL variants. The former three parallel products wasted DSP/LUT area.
-    // Divide uses a
-    // 32-cycle restoring-division FSM — the combinational / and % it replaced
-    // synthesized to a giant carry chain that overflowed XC6SLX9. The FSM is
-    // inlined here so no new file needs adding to the ISE project.
+    // Stage 4: RV32M. Multiply and divide are iterative so wide arithmetic
+    // never sits on the EX forwarding path.
     wire mul_a_signed = (idex_funct3 == 3'b001) || (idex_funct3 == 3'b010);
     wire mul_b_signed = (idex_funct3 == 3'b001);
-    wire signed [32:0] mul_a_ext = mul_a_signed ? {ex_rs1_value[31], ex_rs1_value} :
-                                                {1'b0, ex_rs1_value};
-    wire signed [32:0] mul_b_ext = mul_b_signed ? {ex_rs2_value[31], ex_rs2_value} :
-                                                {1'b0, ex_rs2_value};
-    wire signed [65:0] m_product = mul_a_ext * mul_b_ext;
+    wire [31:0] mul_a_abs = (mul_a_signed && ex_rs1_value[31]) ?
+                            (~ex_rs1_value + 1'b1) : ex_rs1_value;
+    wire [31:0] mul_b_abs = (mul_b_signed && ex_rs2_value[31]) ?
+                            (~ex_rs2_value + 1'b1) : ex_rs2_value;
+    reg         mul_running;
+    reg [5:0]   mul_cnt;
+    reg [63:0]  mul_acc;
+    reg [63:0]  mul_multiplicand;
+    reg [31:0]  mul_multiplier;
+    reg [2:0]   mul_opq;
+    reg         mul_negate;
     reg  [31:0] mul_result;
-    always @(*) begin
-        case (idex_funct3)
-            3'b000:  mul_result = m_product[31:0];   // MUL
-            default: mul_result = m_product[63:32];  // MULH/MULHSU/MULHU
-        endcase
-    end
+    reg         mul_done;
+    wire [63:0] mul_acc_next = mul_acc +
+                               (mul_multiplier[0] ? mul_multiplicand : 64'd0);
+    wire [63:0] mul_product_next = mul_negate ? (~mul_acc_next + 1'b1) :
+                                                mul_acc_next;
+    wire        mul_req = idex_valid && idex_mul_div && !idex_funct3[2];
+    wire        mul_stall = mul_req && !mul_done;
 
     localparam MDU_IDLE = 1'b0, MDU_RUN = 1'b1;
     reg        mdu_state;
@@ -521,8 +556,12 @@ module riscv_pipeline_core #(
     reg [31:0] mdu_result;
     reg        mdu_done;
 
-    wire [31:0] ex_divd_abs  = ex_rs1_value[31] ? (~ex_rs1_value + 1'b1) : ex_rs1_value;
-    wire [31:0] mdu_divs_abs = mdu_divs[31] ? (~mdu_divs + 1'b1) : mdu_divs;
+    wire        mdu_signed_op = !idex_funct3[0]; // DIV/REM signed, DIVU/REMU unsigned
+    wire [31:0] ex_divd_abs  = (mdu_signed_op && ex_rs1_value[31]) ?
+                               (~ex_rs1_value + 1'b1) : ex_rs1_value;
+    wire [31:0] ex_divs_abs  = (mdu_signed_op && ex_rs2_value[31]) ?
+                               (~ex_rs2_value + 1'b1) : ex_rs2_value;
+    wire [31:0] mdu_divs_abs = mdu_divs;
     wire [63:0] mdu_rq_sh    = mdu_rq << 1;
     wire [32:0] mdu_rem_sub  = {1'b0, mdu_rq_sh[63:32]} - {1'b0, mdu_divs_abs};
     wire        mdu_rem_ok   = ~mdu_rem_sub[32];
@@ -680,6 +719,15 @@ module riscv_pipeline_core #(
             perf_load_use_stall <= 32'd0;
             perf_bp_miss        <= 32'd0;
             perf_mdu_inst       <= 32'd0;
+            mul_running <= 1'b0;
+            mul_cnt <= 6'd0;
+            mul_acc <= 64'd0;
+            mul_multiplicand <= 64'd0;
+            mul_multiplier <= 32'd0;
+            mul_opq <= 3'd0;
+            mul_negate <= 1'b0;
+            mul_result <= 32'd0;
+            mul_done <= 1'b0;
             mdu_state  <= MDU_IDLE;
             mdu_cnt    <= 6'd0;
             mdu_done   <= 1'b0;
@@ -705,16 +753,40 @@ module riscv_pipeline_core #(
                 irq_pending <= 1'b1;
             if (mem_wait)
                 perf_load_use_stall <= perf_load_use_stall + 32'd1;
-            // Stage 4: multi-cycle divider FSM (runs every cycle; a stall just
-            // waits). mdu_stall = a divide is in EX and not yet done.
+
+            mul_done <= 1'b0;
+            if (!mul_running) begin
+                if (mul_req && !mul_done) begin
+                    mul_running      <= 1'b1;
+                    mul_cnt          <= 6'd0;
+                    mul_acc          <= 64'd0;
+                    mul_multiplicand <= {32'd0, mul_a_abs};
+                    mul_multiplier   <= mul_b_abs;
+                    mul_opq          <= idex_funct3;
+                    mul_negate       <= (mul_a_signed && ex_rs1_value[31]) ^
+                                        (mul_b_signed && ex_rs2_value[31]);
+                end
+            end else if (mul_cnt == 6'd31) begin
+                mul_result  <= (mul_opq == 3'b000) ? mul_product_next[31:0] :
+                                                    mul_product_next[63:32];
+                mul_done    <= 1'b1;
+                mul_running <= 1'b0;
+            end else begin
+                mul_acc          <= mul_acc_next;
+                mul_multiplicand <= mul_multiplicand << 1;
+                mul_multiplier   <= mul_multiplier >> 1;
+                mul_cnt          <= mul_cnt + 1'b1;
+            end
+
+            // Multi-cycle divider FSM (runs every cycle while EX waits).
             mdu_done <= 1'b0;
             if (mdu_state == MDU_IDLE) begin
                 if (mdu_req && !mdu_done) begin
                     mdu_divd  <= ex_rs1_value;
-                    mdu_divs  <= ex_rs2_value;
+                    mdu_divs  <= ex_divs_abs;
                     mdu_opq   <= idex_funct3;
-                    mdu_a_neg <= ex_rs1_value[31];
-                    mdu_b_neg <= ex_rs2_value[31];
+                    mdu_a_neg <= mdu_signed_op && ex_rs1_value[31];
+                    mdu_b_neg <= mdu_signed_op && ex_rs2_value[31];
                     mdu_div0  <= (ex_rs2_value == 32'b0);
                     mdu_ovf   <= (ex_rs1_value == 32'h80000000) && (ex_rs2_value == 32'hFFFFFFFF);
                     mdu_rq    <= {32'b0, ex_divd_abs};
@@ -742,7 +814,7 @@ module riscv_pipeline_core #(
                 mdu_cnt <= mdu_cnt + 6'd1;
             end
 
-            if (!mdu_stall && !fadd_stall && !mem_wait) begin
+            if (!mul_stall && !mdu_stall && !fadd_stall && !fmul_stall && !mem_wait) begin
                 if (memwb_valid)
                     perf_instret <= perf_instret + 32'd1;
                 if (memwb_valid && memwb_reg_write && (memwb_rd != 5'd0))
@@ -777,6 +849,45 @@ module riscv_pipeline_core #(
                 exmem_jal_or_jalr <= idex_jal || idex_jalr;
                 exmem_lui         <= idex_lui;
                 exmem_lui_data    <= idex_imm;
+
+                // Pipeline payload is don't-care whenever idex_valid is
+                // cleared. Loading it unconditionally keeps redirect/flush
+                // off the wide payload register enables and shortens the
+                // branch-control routing path.
+                idex_pc          <= ifid_pc;
+                idex_instr       <= ifid_instr;
+                idex_pred_taken  <= ifid_pred_taken;
+                idex_pred_target <= ifid_pred_target;
+                idex_rs1         <= id_rs1;
+                idex_rs2         <= id_rs2;
+                idex_rd          <= id_rd;
+                idex_funct3      <= id_funct3;
+                idex_rs1_data    <= rf_rs1_data;
+                idex_rs2_data    <= rf_rs2_data;
+                idex_imm         <= id_imm;
+                idex_alu_ctrl    <= id_alu_ctrl;
+                idex_use_imm     <= id_is_alu_imm || id_is_load || id_is_store || id_is_lui || id_is_auipc || id_is_jalr;
+                idex_reg_write   <= id_is_alu_imm || id_is_alu_reg || id_is_load || id_is_lui || id_is_auipc || id_is_jal || id_is_jalr || id_is_custom0 || id_is_csr_read;
+                idex_mem_read    <= id_is_load;
+                idex_mem_write   <= id_is_store;
+                idex_branch      <= id_is_branch;
+                idex_jal         <= id_is_jal;
+                idex_jalr        <= id_is_jalr;
+                idex_lui         <= id_is_lui;
+                idex_auipc       <= id_is_auipc;
+                idex_mul_div     <= id_is_m_ext;
+                idex_is_csr      <= id_is_csr_read;
+                idex_csr_op      <= id_funct3;
+                idex_csr_addr    <= id_csr_addr;
+
+                // IF/ID payload is also don't-care while ifid_valid is zero.
+                // Keep redirect off these wide register enables.
+                if (!stall) begin
+                    ifid_pc          <= pc_reg;
+                    ifid_instr       <= instr_data;
+                    ifid_pred_taken  <= pred_taken;
+                    ifid_pred_target <= pred_target;
+                end
 
                 if (idex_valid && (idex_instr == 32'h0000006F ||
                                    idex_instr == 32'h00000073 ||  // ECALL
@@ -822,44 +933,23 @@ module riscv_pipeline_core #(
                 end else if (stall) begin
                     perf_load_use_stall <= perf_load_use_stall + 32'd1;
                     idex_valid <= 1'b0;
-                end else if (!halt && instr_valid) begin
+                end else if (!halt) begin
                     if (ifid_valid && id_is_branch)
                         perf_branch <= perf_branch + 32'd1;
-                    pc_reg      <= pred_taken ? pred_target : (pc_reg + 32'd4);
-                    ifid_valid  <= 1'b1;
-                    ifid_pc     <= pc_reg;
-                    ifid_instr  <= instr_data;
-                    ifid_pred_taken  <= pred_taken;
-                    ifid_pred_target <= pred_target;
 
                     idex_valid       <= ifid_valid;
-                    idex_pc          <= ifid_pc;
-                    idex_instr       <= ifid_instr;
-                    idex_pred_taken  <= ifid_pred_taken;
-                    idex_pred_target <= ifid_pred_target;
-                    idex_rs1         <= id_rs1;
-                    idex_rs2       <= id_rs2;
-                    idex_rd        <= id_rd;
-                    idex_funct3    <= id_funct3;
-                    idex_rs1_data  <= rf_rs1_data;
-                    idex_rs2_data  <= rf_rs2_data;
-                    idex_imm       <= id_imm;
-                    idex_alu_ctrl  <= id_alu_ctrl;
-                    idex_use_imm   <= id_is_alu_imm || id_is_load || id_is_store || id_is_lui || id_is_auipc || id_is_jalr;
-                    idex_reg_write <= id_is_alu_imm || id_is_alu_reg || id_is_load || id_is_lui || id_is_auipc || id_is_jal || id_is_jalr || id_is_custom0 || id_is_csr_read;
-                    idex_mem_read  <= id_is_load;
-                    idex_mem_write <= id_is_store;
-                    idex_branch    <= id_is_branch;
-                    idex_jal       <= id_is_jal;
-                    idex_jalr      <= id_is_jalr;
-                    idex_lui       <= id_is_lui;
-                    idex_auipc     <= id_is_auipc;
-                    idex_mul_div   <= id_is_m_ext;
-                    idex_is_csr    <= id_is_csr_read;     // Stage 7
-                    idex_csr_op    <= id_funct3;
-                    idex_csr_addr  <= id_csr_addr;        // Stage 7
                     if (ifid_valid && id_is_m_ext)
                         perf_mdu_inst <= perf_mdu_inst + 32'd1;
+
+                    // A synchronous instruction source may leave bubbles
+                    // between responses. Consume IF/ID independently, then
+                    // either install the new response or mark IF/ID empty.
+                    if (instr_valid) begin
+                        pc_reg      <= pred_taken ? pred_target : (pc_reg + 32'd4);
+                        ifid_valid  <= 1'b1;
+                    end else begin
+                        ifid_valid <= 1'b0;
+                    end
                 end
             end
         end

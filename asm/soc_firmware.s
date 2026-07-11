@@ -56,7 +56,7 @@ start:
     sw   t0, 0(t1)
     li   t0, 8
     csrw mstatus, t0
-    .puts "\nRV32 shell 25M ODDR2 R13\n"
+    .puts "\nRV32 shell 50M BRAM5 R14\n"
     j    shell_loop
 
 irq_handler:
@@ -149,7 +149,7 @@ shell_help:
     j    shell_loop
 
 version_cmd:
-    .puts "build 25M ALL-SELFTEST FIXED-PRINT IRQ-PONG R13\n"
+    .puts "build 50M ALL-SELFTEST SYNC-BRAM50 IRQ-PONG R14\n"
     j    shell_loop
 
 s_cmd:

@@ -1,6 +1,6 @@
 # FPGA RISC-V CPU
 
-面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、可上板的五级流水线 CPU、片上内存、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及 CPU 自己运行的串口 shell、8x8 手写数字推理和 Pong demo。
+面向 TEC-PLUS / Xilinx Spartan-6 XC6SLX9 的 RISC-V CPU 课程设计。工程包含可仿真的基础 CPU、带同步取指前端的五级流水线 CPU、片上 BRAM、I-Cache、LED/KEY、真正由 CPU 访问的 UART MMIO，以及 CPU 自己运行的串口 shell、8x8 手写数字推理和 Pong demo。
 
 ## 当前实现
 
@@ -13,13 +13,13 @@
 
 ### 进阶层次
 
-- 五级流水线 CPU：`src/riscv_pipeline_core.v`
+- 五级执行流水线 + 同步取指前端：`src/riscv_pipeline_core.v`
 - 流水线阶段：IF / ID / EX / MEM / WB
 - EX 阶段数据转发
 - load-use 数据冒险暂停
 - 分支/跳转冲刷流水线
 - 16 项 2-bit BHT 动态分支预测，可用参数关闭对比 baseline
-- 片上指令 ROM 和片上数据 RAM
+- 同步片上指令 BRAM ROM 和按字节写入的数据 BRAM
 - 8 行 I-Cache：顶层默认 2 路组相联 + LRU，也保留直接映射版本用于对照：`src/icache_2way.v` / `src/icache_direct_mapped.v`
 - LED / KEY / UART memory-mapped I/O
 - 两片 HY57V2562 x16 并行组成 64 MiB x32 SDRAM，支持初始化、刷新、字节掩码和 wait-state
@@ -64,14 +64,14 @@
 - 未实现 MMU / 虚拟内存
 - 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32/FGT32`
 - 当前顶层默认使用 2 路组相联 I-Cache + LRU，设置 `USE_2WAY_ICACHE=0` 可切换为直接映射
-- R13 PPA 已由 ISE 14.7/XPower 更新：Occupied Slices 99%、LUT 88%、25 MHz 约束通过、总功耗估计 44.09 mW（Medium confidence）
+- R14使用单一50 MHz时钟、同步BRAM和迭代式MUL/FMUL，16项Icarus回归通过；ISE最短周期19.216 ns、50 MHz裕量+0.784 ns，LUT 76%、Slice 93%，XPower估算总功耗90.56 mW
 
 ## 目录结构
 
 ```text
 src/
   cpu_core.v              单周期 RV32I 子集 CPU
-  riscv_pipeline_core.v   五级流水线 CPU
+  riscv_pipeline_core.v   五级执行流水线与同步取指控制
   icache_direct_mapped.v  直接映射 I-Cache
   icache_2way.v           2 路组相联 I-Cache 对比模块
   top.v                   FPGA 顶层
@@ -112,10 +112,10 @@ xilinx.xise              ISE 14.7 工程
 ## 系统结构
 
 ```text
-TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 二分频后 SoC 运行于 25MHz）
+TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 后单一 50MHz SoC 时钟域）
         |
         v
-五级流水线 CPU
+同步取指前端 + 五级执行流水线 CPU
         |
         +-- I-Cache -- 片上指令 ROM
         |
@@ -127,7 +127,7 @@ TEC-PLUS 50MHz 输入时钟 / RESET（BUFG 二分频后 SoC 运行于 25MHz）
         +-- MMIO UART -- Python 终端
 ```
 
-核心板的 U2/SH 与 U3/SL 均为 HY57V2562（4 Banks x 4M x 16 bit）。控制器让两片接收相同命令和地址，分别提供高/低 16 位，形成 64 MiB 的 32-bit 外部存储器。系统在 25 MHz 下使用 burst length 1、CAS latency 2、auto-precharge 和按时钟频率自动计算的周期刷新。
+核心板的 U2/SH 与 U3/SL 均为 HY57V2562（4 Banks x 4M x 16 bit）。控制器让两片接收相同命令和地址，分别提供高/低 16 位，形成 64 MiB 的 32-bit 外部存储器。系统按 50 MHz 参数使用 burst length 1、CAS latency 2、auto-precharge 和周期刷新。
 
 ## 板端功能
 
@@ -255,7 +255,7 @@ iverilog -tnull src/riscv_pipeline_core.v src/sdram_controller.v \
 python scripts/analyze.py
 ```
 
-当前应看到 15/15 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M、custom float32、中断、SDRAM、CNN 和 shell/Pong 结果。
+当前应看到 16/16 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M边界、custom float32、中断、SDRAM、CNN 和 shell/Pong 结果。
 
 8x8 数字推理端到端仿真：
 
@@ -364,11 +364,11 @@ python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
 ```
 
-打开后会进入 CPU 串口 shell。下面的 `SELFTEST PASS` 是组合自检全部通过时的预期输出；当前 R13 已通过 15 项仿真，板端组合自检仍需重新烧录复测：
+打开后会进入 CPU 串口 shell。下面的 `SELFTEST PASS` 是组合自检全部通过时的预期输出；当前 R14 已通过 16 项仿真，板端组合自检仍需重新实现、烧录和复测：
 
 ```text
 SELFTEST PASS
-RV32 shell 25M ODDR2 R13
+RV32 shell 50M BRAM5 R14
 cpu>
 ```
 
@@ -474,7 +474,7 @@ data/mnist8_model.json   Python 端演示模板和训练元数据
 
 ```text
 SELFTEST PASS
-RV32 shell 25M ODDR2 R13
+RV32 shell 50M BRAM5 R14
 cpu>
 ```
 
@@ -484,7 +484,7 @@ shell 命令：
 h ver s m0-m9 irq sdram p ledX cnn pong paint q
 ```
 
-自检通过时四个 LED 全亮。当前 R13 的十个结果保存在不会被 CNN 或游戏覆盖的固定区域；板端应逐项读取确认，不能只依据 LED 判断：
+自检通过时四个 LED 全亮。当前 R14 的十个结果保存在不会被 CNN 或游戏覆盖的固定区域；板端应逐项读取确认，不能只依据 LED 判断：
 
 ```text
 m0 = 0x000000ff  RV32I 算术/逻辑/移位
@@ -565,4 +565,4 @@ CPU 每帧输出定长二进制包 `A5 44 83 <x_lo> <x_hi> <y> <128 cells>`，Py
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含片上内存、MMIO UART/LED/KEY、五级流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、RV32M 乘除法、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。系统可通过仿真、LED、CPU shell、CPU 自主 8x8 数字推理和 CPU Pong demo 进行验证；R13 的 PPA、消融实验和时序结果已记录，组合开机自检仍需重新烧录复测。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含同步片上 BRAM、MMIO UART/LED/KEY、五级执行流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、多周期 RV32M、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。R14 RTL 已在单一 50 MHz 配置下通过完整功能回归；新的 ISE PPA、门级时序仿真和真板组合自检仍待完成。

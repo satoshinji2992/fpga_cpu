@@ -36,7 +36,7 @@ module top #(
     parameter CLK_FREQ = 50000000,
     parameter BAUD     = 115200,
     parameter USE_2WAY_ICACHE = 1,
-    parameter PONG_TICK_CYCLES = (CLK_FREQ / 2) / 4
+    parameter PONG_TICK_CYCLES = CLK_FREQ / 4
 )(
     input  wire clk,        // 核心板50MHz时钟 (T8)
     input  wire rst_n,      // 核心板RESET按键, 低有效 (L3)
@@ -61,18 +61,12 @@ module top #(
     output wire [12:0] sl_a, inout wire [15:0] sl_db
 );
 
-    localparam SYS_CLK_FREQ = CLK_FREQ / 2;
+    localparam SYS_CLK_FREQ = CLK_FREQ;
     localparam CLKS_PER_BIT = SYS_CLK_FREQ / BAUD;
 
-    // The board oscillator remains 50 MHz, while the complete SoC runs from a
-    // single 25 MHz global clock shared by CPU, RAM and all peripherals.
-    reg clk_div2 = 1'b0;
-    // Keep the generated clock running during reset so every downstream
-    // sequential block observes reset even when rst_n starts low at power-up.
-    always @(posedge clk)
-        clk_div2 <= ~clk_div2;
+    // One global 50 MHz clock domain for CPU, memories, and peripherals.
     wire sys_clk;
-    BUFG u_sys_clk_buf (.I(clk_div2), .O(sys_clk));
+    BUFG u_sys_clk_buf (.I(clk), .O(sys_clk));
 
     // Assert reset asynchronously, but release it synchronously in the only
     // clock domain used by the SoC. This prevents different pipeline/cache/RAM
@@ -143,10 +137,13 @@ module top #(
     );
 
     //----------------------------------------------
-    // 指令 ROM (异步读) + 直接映射 I-Cache
+    // Synchronous instruction ROM behind the selected I-Cache.
     //----------------------------------------------
     reg [31:0] instr_mem [0:2047];
-    assign instr_rom_data = instr_mem[instr_rom_addr[12:2]];
+    reg [31:0] instr_rom_data_reg;
+    assign instr_rom_data = instr_rom_data_reg;
+    always @(posedge sys_clk)
+        instr_rom_data_reg <= instr_mem[instr_rom_addr[12:2]];
 
     generate
         if (USE_2WAY_ICACHE) begin : gen_icache_2way
@@ -192,6 +189,8 @@ module top #(
     reg [7:0] data_mem_b1 [0:1023];
     reg [7:0] data_mem_b2 [0:1023];
     reg [7:0] data_mem_b3 [0:1023];
+    reg [7:0] ram_rdata_b0, ram_rdata_b1, ram_rdata_b2, ram_rdata_b3;
+    reg       ram_pending;
 
     wire        ram_sel  = (data_addr[31:12] == 20'b0);
     wire        sdram_sel = (data_addr[31:26] == 6'h04);
@@ -216,15 +215,48 @@ module top #(
     wire        is_ic_miss    = io_sel & (io_word == 12'h40F); // 0x103C
     wire        is_sdram_stat = io_sel & (io_word == 12'h410); // 0x1040
 
+    wire ram_accept = data_valid && ram_sel && !ram_pending;
+
+    // Keep the RAM process synchronous and reset-free so XST can map each
+    // byte lane to a native block RAM with byte writes.
     always @(posedge sys_clk) begin
-        if (ram_sel && data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
-        if (ram_sel && data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
-        if (ram_sel && data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
-        if (ram_sel && data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
+        if (ram_accept) begin
+            ram_rdata_b0 <= data_mem_b0[data_idx];
+            if (data_we && data_be[0]) data_mem_b0[data_idx] <= data_wdata[7:0];
+        end
+    end
+    always @(posedge sys_clk) begin
+        if (ram_accept) begin
+            ram_rdata_b1 <= data_mem_b1[data_idx];
+            if (data_we && data_be[1]) data_mem_b1[data_idx] <= data_wdata[15:8];
+        end
+    end
+    always @(posedge sys_clk) begin
+        if (ram_accept) begin
+            ram_rdata_b2 <= data_mem_b2[data_idx];
+            if (data_we && data_be[2]) data_mem_b2[data_idx] <= data_wdata[23:16];
+        end
+    end
+    always @(posedge sys_clk) begin
+        if (ram_accept) begin
+            ram_rdata_b3 <= data_mem_b3[data_idx];
+            if (data_we && data_be[3]) data_mem_b3[data_idx] <= data_wdata[31:24];
+        end
     end
 
-    wire [31:0] ram_rdata = {data_mem_b3[data_idx], data_mem_b2[data_idx],
-                             data_mem_b1[data_idx], data_mem_b0[data_idx]};
+    // The request tracker is separate from the RAM template. The CPU keeps
+    // MEM stable until this one-cycle acknowledgement is observed.
+    always @(posedge sys_clk or negedge sys_rst_n) begin
+        if (!sys_rst_n)
+            ram_pending <= 1'b0;
+        else if (ram_pending)
+            ram_pending <= 1'b0;
+        else if (ram_accept)
+            ram_pending <= 1'b1;
+    end
+
+    wire [31:0] ram_rdata = {ram_rdata_b3, ram_rdata_b2,
+                             ram_rdata_b1, ram_rdata_b0};
 
     //----------------------------------------------
     // UART 收发器 (直接挂在 MMIO 上)
@@ -241,7 +273,18 @@ module top #(
     reg [2:0]  irq_pending_mmio;
     reg [31:0] pong_tick_counter;
     reg [3:0]  key_prev;
-    wire [3:0] key_pressed = {~key4, ~key3, ~key2, ~key1};
+    reg [3:0]  key_meta, key_sync;
+    wire [3:0] key_pressed = key_sync;
+
+    always @(posedge sys_clk or negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            key_meta <= 4'd0;
+            key_sync <= 4'd0;
+        end else begin
+            key_meta <= {~key4, ~key3, ~key2, ~key1};
+            key_sync <= key_meta;
+        end
+    end
 
     uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_uart_rx (
         .clk(sys_clk), .rst_n(sys_rst_n), .rx(uart_rx), .data(rx_data), .valid(rx_valid)
@@ -354,7 +397,7 @@ module top #(
         // tx_start bridges the one-cycle handoff into uart_tx.  Reporting it
         // as busy prevents software from issuing another byte in that window.
         is_stat ? {30'b0, (tx_busy | tx_start), rx_pending} :
-        is_key  ? {28'b0, ~key4, ~key3, ~key2, ~key1} :
+        is_key  ? {28'b0, key_pressed} :
         is_irq_en  ? {29'b0, irq_enable} :
         is_irq_pnd ? {29'b0, irq_pending_mmio} :
         is_perf_cycle ? perf_cycle :
@@ -374,7 +417,8 @@ module top #(
     // store while TX is busy, the CPU keeps that store in EX/MEM until the
     // byte can be accepted; no character can be silently dropped.
     wire tx_store_wait = data_valid && data_we && is_tx && (tx_busy || tx_start);
-    assign data_ready = sdram_sel ? sdram_ready : !tx_store_wait;
+    assign data_ready = ram_sel ? ram_pending :
+                        sdram_sel ? sdram_ready : !tx_store_wait;
 
     //----------------------------------------------
     // 指令 ROM 初始化: NOP 填充 + 数据 RAM 清零 + MNIST8 float32 模型/程序

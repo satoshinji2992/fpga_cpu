@@ -80,7 +80,7 @@ def render_perf_values(values: list[int]) -> None:
     bp_accuracy = 100.0 * (branch - bp_miss) / branch if branch else 100.0
     accesses = hit + miss
     hit_rate = 100.0 * hit / accesses if accesses else 0.0
-    print("\n[CPU performance counters @ 25 MHz]")
+    print("\n[CPU performance counters @ 50 MHz]")
     print(f"cycle={cycle} (elapsed clocks)  instret={instret} (retired instructions)")
     print(f"CPI={cpi:.3f}  throughput={throughput_mips:.3f} MIPS")
     print(f"branch={branch}  flush={flush}  bp_miss={bp_miss}  BP accuracy={bp_accuracy:.2f}%")
