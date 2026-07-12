@@ -568,4 +568,4 @@ CPU 每帧输出定长二进制包 `A5 44 83 <x_lo> <x_hi> <y> <128 cells>`，Py
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含同步片上 BRAM、MMIO UART/LED/KEY、五级执行流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、多周期 RV32M、custom float32、最小 CSR、自定义指令、浮点MLP和表达式计算器的小型可运行计算机系统。R15已在50 MHz真板通过组合自检；R16通过17项RTL回归，新的ISE PPA与真板复测待完成。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含同步片上 BRAM、MMIO UART/LED/KEY、五级执行流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、多周期 RV32M、custom float32、最小 CSR、自定义指令、浮点MLP和表达式计算器的小型可运行计算机系统。2.0.0/R16已通过17项RTL回归、ISE综合与时序、XPower分析及50 MHz真板全部功能验收。
