@@ -61,7 +61,7 @@
         instr_mem[ 59] = 32'h57D000EF;  // 0x0EC: jal    ra, putc
         instr_mem[ 60] = 32'h03100513;  // 0x0F0: addi   a0, x0, 49
         instr_mem[ 61] = 32'h575000EF;  // 0x0F4: jal    ra, putc
-        instr_mem[ 62] = 32'h03400513;  // 0x0F8: addi   a0, x0, 52
+        instr_mem[ 62] = 32'h03500513;  // 0x0F8: addi   a0, x0, 53
         instr_mem[ 63] = 32'h56D000EF;  // 0x0FC: jal    ra, putc
         instr_mem[ 64] = 32'h00A00513;  // 0x100: addi   a0, x0, 10
         instr_mem[ 65] = 32'h565000EF;  // 0x104: jal    ra, putc
@@ -348,7 +348,7 @@
         instr_mem[346] = 32'h101000EF;  // 0x568: jal    ra, putc
         instr_mem[347] = 32'h03100513;  // 0x56C: addi   a0, x0, 49
         instr_mem[348] = 32'h0F9000EF;  // 0x570: jal    ra, putc
-        instr_mem[349] = 32'h03400513;  // 0x574: addi   a0, x0, 52
+        instr_mem[349] = 32'h03500513;  // 0x574: addi   a0, x0, 53
         instr_mem[350] = 32'h0F1000EF;  // 0x578: jal    ra, putc
         instr_mem[351] = 32'h00A00513;  // 0x57C: addi   a0, x0, 10
         instr_mem[352] = 32'h0E9000EF;  // 0x580: jal    ra, putc

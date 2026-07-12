@@ -112,7 +112,10 @@ module riscv_pipeline_core #(
     reg [31:0] pc_reg;
     assign instr_addr = pc_reg;
 
-    reg [31:0] regs [0:31];
+    // The pipeline consumes both register operands combinationally in ID.
+    // Force LUT RAM: XST otherwise maps this array to synchronous block RAM,
+    // silently adding a read cycle and returning stale values on hardware.
+    (* ram_style = "distributed" *) reg [31:0] regs [0:31];
     integer i;
 
     // Power-up init (NOT a clocked reset): this becomes the distributed-RAM
