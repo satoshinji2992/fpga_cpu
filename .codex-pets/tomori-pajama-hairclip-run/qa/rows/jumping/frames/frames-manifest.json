@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "chroma_key": {
+    "hex": "#FFFF00",
+    "rgb": [
+      255,
+      255,
+      0
+    ],
+    "threshold": 96.0
+  },
+  "rows": [
+    {
+      "state": "jumping",
+      "frames": [
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\jumping\\frames\\jumping\\00.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\jumping\\frames\\jumping\\01.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\jumping\\frames\\jumping\\02.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\jumping\\frames\\jumping\\03.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\jumping\\frames\\jumping\\04.png"
+      ],
+      "method": "components"
+    }
+  ]
+}

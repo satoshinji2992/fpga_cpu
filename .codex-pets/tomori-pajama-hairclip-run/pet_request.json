@@ -1,0 +1,289 @@
+{
+  "pet_id": "tomori",
+  "display_name": "Tomori",
+  "description": "\u9ad8\u677e\u706f PAJAMA PARTY \u9020\u578b\u52a8\u753b\u5ba0\u7269\uff0c\u4f69\u6234\u4f01\u9e45\u53d1\u5361\u3002.",
+  "created_at": "2026-07-11T12:57:16.511976+00:00",
+  "sprite_version_number": 2,
+  "atlas": {
+    "columns": 8,
+    "rows": 11,
+    "cell_width": 192,
+    "cell_height": 208,
+    "width": 1536,
+    "height": 2288
+  },
+  "rows": [
+    {
+      "state": "idle",
+      "row": 0,
+      "frames": 6,
+      "purpose": "calm resting, breathing, and blinking loop"
+    },
+    {
+      "state": "running-right",
+      "row": 1,
+      "frames": 8,
+      "purpose": "rightward drag movement loop"
+    },
+    {
+      "state": "running-left",
+      "row": 2,
+      "frames": 8,
+      "purpose": "leftward drag movement loop"
+    },
+    {
+      "state": "waving",
+      "row": 3,
+      "frames": 4,
+      "purpose": "greeting or attention gesture"
+    },
+    {
+      "state": "jumping",
+      "row": 4,
+      "frames": 5,
+      "purpose": "hover or playful jump"
+    },
+    {
+      "state": "failed",
+      "row": 5,
+      "frames": 8,
+      "purpose": "blocked, failed, or cancelled reaction"
+    },
+    {
+      "state": "waiting",
+      "row": 6,
+      "frames": 6,
+      "purpose": "waiting for approval, help, or user input"
+    },
+    {
+      "state": "running",
+      "row": 7,
+      "frames": 6,
+      "purpose": "active task work or processing"
+    },
+    {
+      "state": "review",
+      "row": 8,
+      "frames": 6,
+      "purpose": "ready or completed output review"
+    },
+    {
+      "state": "look-row-9",
+      "row": 9,
+      "frames": 8,
+      "directions": [
+        "000",
+        "022.5",
+        "045",
+        "067.5",
+        "090",
+        "112.5",
+        "135",
+        "157.5"
+      ],
+      "purpose": "clockwise look directions from up through down-right"
+    },
+    {
+      "state": "look-row-10",
+      "row": 10,
+      "frames": 8,
+      "directions": [
+        "180",
+        "202.5",
+        "225",
+        "247.5",
+        "270",
+        "292.5",
+        "315",
+        "337.5"
+      ],
+      "purpose": "clockwise look directions from down through up-left"
+    }
+  ],
+  "layout_guides": [
+    {
+      "state": "idle",
+      "path": "references\\layout-guides\\idle.png",
+      "width": 1152,
+      "height": 208,
+      "frames": 6,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "running-right",
+      "path": "references\\layout-guides\\running-right.png",
+      "width": 1536,
+      "height": 208,
+      "frames": 8,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "running-left",
+      "path": "references\\layout-guides\\running-left.png",
+      "width": 1536,
+      "height": 208,
+      "frames": 8,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "waving",
+      "path": "references\\layout-guides\\waving.png",
+      "width": 768,
+      "height": 208,
+      "frames": 4,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "jumping",
+      "path": "references\\layout-guides\\jumping.png",
+      "width": 960,
+      "height": 208,
+      "frames": 5,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "failed",
+      "path": "references\\layout-guides\\failed.png",
+      "width": 1536,
+      "height": 208,
+      "frames": 8,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "waiting",
+      "path": "references\\layout-guides\\waiting.png",
+      "width": 1152,
+      "height": 208,
+      "frames": 6,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "running",
+      "path": "references\\layout-guides\\running.png",
+      "width": 1152,
+      "height": 208,
+      "frames": 6,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "review",
+      "path": "references\\layout-guides\\review.png",
+      "width": 1152,
+      "height": 208,
+      "frames": 6,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "look-row-9",
+      "path": "references\\layout-guides\\look-row-9.png",
+      "width": 1536,
+      "height": 208,
+      "frames": 8,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "look-row-10",
+      "path": "references\\layout-guides\\look-row-10.png",
+      "width": 1536,
+      "height": 208,
+      "frames": 8,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    },
+    {
+      "state": "look-cardinals",
+      "path": "references\\layout-guides\\look-cardinals.png",
+      "width": 768,
+      "height": 208,
+      "frames": 4,
+      "cell_width": 192,
+      "cell_height": 208,
+      "safe_margin_x": 18,
+      "safe_margin_y": 16,
+      "usage": "layout guide input only; do not copy visible guide lines into generated sprite strips"
+    }
+  ],
+  "references": [
+    {
+      "path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\references\\reference-01.png",
+      "width": 1150,
+      "height": 1741,
+      "mode": "RGBA",
+      "format": "PNG",
+      "source_path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-rebuild\\source-references\\official-tomori.png",
+      "copied_path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\references\\reference-01.png"
+    },
+    {
+      "path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\references\\reference-02.jpg",
+      "width": 1000,
+      "height": 1000,
+      "mode": "RGB",
+      "format": "JPEG",
+      "source_path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-rebuild\\source-references\\official-pajama-party-fullbody.jpg",
+      "copied_path": "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\references\\reference-02.jpg"
+    }
+  ],
+  "chroma_key": {
+    "hex": "#FFFF00",
+    "rgb": [
+      255,
+      255,
+      0
+    ],
+    "name": "yellow",
+    "selection": "auto",
+    "score": 204.09
+  },
+  "pet_notes": "\u5fe0\u5b9e\u518d\u73b0\u9ad8\u677e\u706f\uff1a\u7d2b\u7070\u8272\u9f50\u8033\u77ed\u53d1\u3001\u539a\u91cd\u4e0d\u89c4\u5219\u5218\u6d77\u3001\u7c89\u68d5\u773c\u3001\u5b89\u9759\u7565\u4e0d\u5b89\u795e\u60c5\u3002\u5b98\u65b9 PAJAMA PARTY \u670d\u88c5\uff1a\u6d45\u84dd\u9732\u80a9\u8377\u53f6\u8fb9\u4e0a\u8863\u3001\u767d\u8272\u53cc\u5c42\u8377\u53f6\u8fb9\u77ed\u88e4\u3001\u84dd\u767d\u889c\u5708\u3001\u5c0f\u9e1f\u62d6\u978b\u3002\u5934\u90e8\u53ea\u6709\u5939\u5728\u5934\u53d1\u5de6\u4e0a\u65b9\u7684\u5c0f\u578b\u84dd\u8272\u4f01\u9e45\u4e0e\u8774\u8776\u7ed3\u53d1\u5361\uff1b\u7edd\u5bf9\u6ca1\u6709\u7761\u5e3d\u3001\u5934\u5dfe\u3001\u515c\u5e3d\u3001\u5e3d\u5b50\u6216\u8986\u76d6\u5934\u53d1\u7684\u5e03\u6599\u3002\u5b8c\u6574\u9732\u51fa\u5934\u9876\u3001\u77ed\u53d1\u540e\u8111\u548c\u77ed\u53d1\u8f6e\u5ed3\u3002\u5de6\u53f3\u62d6\u52a8\u6700\u7ec8\u5171\u7528\u540c\u4e00\u5957\u53f3\u62d6\u60ac\u7a7a\u52a8\u753b\u3002",
+  "style_preset": "sticker",
+  "style_notes": "\u7cbe\u81f4\u65e5\u7cfb\u52a8\u753bQ\u7248\u8d34\u7eb8\u7cbe\u7075\uff0c\u5fe0\u5b9e\u5b98\u65b9\u77ed\u53d1\u4e0e\u4f01\u9e45\u53d1\u5361\uff0c\u6e05\u6670\u5e73\u6d82\u8d5b\u7490\u7490\u9634\u5f71\u3002",
+  "style_contract": "Pet-safe sprite: compact full-body mascot, readable in a 192x208 cell, clear silhouette, simple face, stable palette/materials, and crisp edges for chroma-key extraction. Style `sticker`: Polished sticker mascot with bold clean shapes, crisp outline, flat colors, and minimal highlight detail. User style notes: \u7cbe\u81f4\u65e5\u7cfb\u52a8\u753bQ\u7248\u8d34\u7eb8\u7cbe\u7075\uff0c\u5fe0\u5b9e\u5b98\u65b9\u77ed\u53d1\u4e0e\u4f01\u9e45\u53d1\u5361\uff0c\u6e05\u6670\u5e73\u6d82\u8d5b\u7490\u7490\u9634\u5f71\u3002.",
+  "brand_name": "",
+  "brand_brief": "",
+  "brand_sources": [],
+  "pet_safe_style": "Pet-safe sprite: compact full-body mascot, readable in a 192x208 cell, clear silhouette, simple face, stable palette/materials, and crisp edges for chroma-key extraction.",
+  "primary_generation_skill": "$imagegen"
+}

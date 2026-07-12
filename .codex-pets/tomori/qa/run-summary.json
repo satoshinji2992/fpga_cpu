@@ -1,0 +1,15 @@
+{
+    "ok":  true,
+    "spriteVersionNumber":  2,
+    "run_dir":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori",
+    "spritesheet":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\final\\spritesheet-extended.webp",
+    "validation":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\final\\validation-extended.json",
+    "chroma_despill":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\chroma-despill-extended.json",
+    "contact_sheet":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\contact-sheet-extended.png",
+    "direction_sheet":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\look-directions.png",
+    "direction_semantics":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\direction-semantics.json",
+    "blind_direction_validation":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\direction-blind-validation.json",
+    "continuity":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\look-continuity.json",
+    "review":  "C:\\code\\fpga_cpu\\.codex-pets\\tomori\\qa\\review.json",
+    "package":  "C:\\Users\\satoshinji\\.codex\\pets\\tomori"
+}

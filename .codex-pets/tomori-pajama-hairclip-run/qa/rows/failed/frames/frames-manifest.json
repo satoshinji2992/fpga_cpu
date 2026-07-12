@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "chroma_key": {
+    "hex": "#FFFF00",
+    "rgb": [
+      255,
+      255,
+      0
+    ],
+    "threshold": 96.0
+  },
+  "rows": [
+    {
+      "state": "failed",
+      "frames": [
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\00.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\01.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\02.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\03.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\04.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\05.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\06.png",
+        "C:\\code\\fpga_cpu\\.codex-pets\\tomori-pajama-hairclip-run\\qa\\rows\\failed\\frames\\failed\\07.png"
+      ],
+      "method": "components"
+    }
+  ]
+}

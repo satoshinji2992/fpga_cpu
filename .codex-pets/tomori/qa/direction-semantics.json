@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "reviewed_by": "independent-final-visual-qa",
+  "directions": [
+    {"direction":"000","verdict":"pass","expected":"up","observed":"up","reason":"Upward pupils and lifted gaze read up."},
+    {"direction":"022.5","verdict":"pass","expected":"up-right","observed":"up-right","reason":"Face and pupils shift screen-right while pupils and chin remain lifted."},
+    {"direction":"045","verdict":"warning","expected":"up-right","observed":"up-right","reason":"Head and pupils clearly point screen-right; the upward eye line is subtle but readable in the labeled loop."},
+    {"direction":"067.5","verdict":"pass","expected":"up-right","observed":"up-right","reason":"Strong screen-right face turn with raised pupils."},
+    {"direction":"090","verdict":"pass","expected":"right","observed":"right","reason":"Profile, nose, and pupils point screen-right."},
+    {"direction":"112.5","verdict":"pass","expected":"down-right","observed":"down-right","reason":"Nose and pupils point screen-right while eyelids and gaze begin lowering."},
+    {"direction":"135","verdict":"warning","expected":"down-right","observed":"down-right","reason":"Head and nose clearly point screen-right; lowered pupils and eyelids read down in labeled context despite blind vertical uncertainty."},
+    {"direction":"157.5","verdict":"pass","expected":"down-right","observed":"down-right","reason":"Screen-right profile is retained while head and eyes angle distinctly downward."},
+    {"direction":"180","verdict":"pass","expected":"down","observed":"down","reason":"Frontal face with lowered eyelids and pupils reads down."},
+    {"direction":"202.5","verdict":"pass","expected":"down-left","observed":"down-left","reason":"Face and pupils shift screen-left while gaze remains lowered."},
+    {"direction":"225","verdict":"pass","expected":"down-left","observed":"down-left","reason":"Nose and pupils point screen-left with a lowered eye line."},
+    {"direction":"247.5","verdict":"pass","expected":"down-left","observed":"down-left","reason":"Strong screen-left turn with pupils still down."},
+    {"direction":"270","verdict":"pass","expected":"left","observed":"left","reason":"Profile, nose, and pupils point screen-left."},
+    {"direction":"292.5","verdict":"pass","expected":"up-left","observed":"up-left","reason":"Nose and pupils point screen-left while eyes and chin begin lifting."},
+    {"direction":"315","verdict":"pass","expected":"up-left","observed":"up-left","reason":"Head and pupils remain screen-left with a clear upward eye line."},
+    {"direction":"337.5","verdict":"pass","expected":"up-left","observed":"up-left","reason":"Screen-left turn is retained while pupils and chin lift strongly toward up."}
+  ],
+  "warnings": [
+    "Blind vertical-3 reverses isolated 045/135 classifications, but labeled normal-size inspection confirms the intended quadrants and the ordered loop remains monotonic.",
+    "Continuity metric warnings are not visibly defective or disruptive in the ordered loop."
+  ]
+}
