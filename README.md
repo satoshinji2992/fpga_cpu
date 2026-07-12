@@ -64,7 +64,9 @@
 - 未实现 MMU / 虚拟内存
 - 未实现完整 RV32F；当前只实现面向推理演示的 custom float32 `FADD32/FMUL32/FGT32`
 - 当前顶层默认使用 2 路组相联 I-Cache + LRU，设置 `USE_2WAY_ICACHE=0` 可切换为直接映射
-- R14使用单一50 MHz时钟、同步BRAM和迭代式MUL/FMUL，16项Icarus回归通过；ISE最短周期19.216 ns、50 MHz裕量+0.784 ns，LUT 76%、Slice 93%，XPower估算总功耗90.56 mW
+- R15真板已在50 MHz稳定通过十项开机自检；R16加入浮点两层MLP与表达式计算器，17项Icarus回归全部通过
+- 当前发布版本：`2.0.0`（硬件/固件标识R16）
+- R16把指令ROM扩展为16 KiB；ISE实现后最短周期19.349 ns（51.682 MHz），LUT 77%、Slice 95%、RAMB16 25%，满足50 MHz；XPower估算总功耗91.30 mW
 
 ## 目录结构
 
@@ -255,7 +257,7 @@ iverilog -tnull src/riscv_pipeline_core.v src/sdram_controller.v \
 python scripts/analyze.py
 ```
 
-当前应看到 16/16 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M边界、custom float32、中断、SDRAM、CNN 和 shell/Pong 结果。
+当前应看到 17/17 个 testbench 通过，并输出 CPI、分支预测准确率、I-Cache 命中率、RV32M边界、custom float32、中断、SDRAM、CNN、计算器和 shell/Pong 结果。
 
 8x8 数字推理端到端仿真：
 
@@ -364,11 +366,11 @@ python scripts/serial_shell.py --list
 python scripts/serial_shell.py -p COM5
 ```
 
-打开后会进入 CPU 串口 shell。下面的 `SELFTEST PASS` 是组合自检全部通过时的预期输出；当前 R14 已通过 16 项仿真，板端组合自检仍需重新实现、烧录和复测：
+打开后会进入 CPU 串口 shell。R15 已在50 MHz真板稳定得到 `SELFTEST PASS`；R16功能仿真已通过，烧录后应显示：
 
 ```text
 SELFTEST PASS
-RV32 shell 50M BRAM5 R14
+RV32 shell 50M BRAM5 R16
 cpu>
 ```
 
@@ -384,6 +386,7 @@ mem N / mN      读取固定自检结果 m0..m9（CNN 和游戏不会覆盖）
 perf 或 p       打印全部性能计数器、CPI、吞吐量和命中率
 ledX            设置 LED，X 为 0..f
 cnn             进入连续 8x8 数字推理，模式内 q 返回 shell
+calc            浮点表达式计算器，支持括号、十进制数和 + - * /，单独输入 q 返回
 pong            进入定时中断自动推进的 CPU Pong；a/d 移动，n 重开，q 返回（s 可单步）
 paint           进入 512x256 SDRAM 画布；wasd 移动，x/空格绘制，c 清空，q 返回
 q               在主 shell 中让板端程序进入 idle
@@ -461,30 +464,30 @@ Python 会提示选择 `0-9`，并把 `data/mnist8_model.json` 中的 8x8 演示
 
 数字识别不是 Python 端计算的。Python 只负责生成/发送 8x8 像素，并把 FPGA 串口输出显示出来；真正的 shell、图像接收、float32 推理、argmax 分类和结果输出都在 `asm/soc_firmware.s` 中，由 RISC-V CPU 执行。
 
-模型由 `scripts/train_mnist8.py` 在电脑上离线训练：MNIST 28x28 图像先缩放并二值化为 8x8，再训练一个 `64 -> 10` 的 float32 线性分类器。训练脚本导出：
+模型由 `scripts/train_mnist8.py` 在 WSL/PyTorch 中离线训练：MNIST 28x28 图像先缩放并二值化为 8x8，再训练一个 `64 -> 8 -> 10` 的 float32 两层MLP，中间层使用ReLU。训练脚本导出：
 
 ```text
-src/cnn_weights.vh       FPGA data RAM 初始化，包含 weights[10][64] 和 bias[10]
+src/cnn_weights.vh       FPGA data RAM 初始化，包含 W1/b1/W2/b2
 data/mnist8_model.json   Python 端演示模板和训练元数据
 ```
 
-当前硬件时序友好的非负 float32 权重和偏置，在板端逐位浮点模型上的测试集准确率为 `82.37%`。FPGA 上只运行推理，不进行训练。
+当前模型在板端逐位一致的 custom-float32 模型上测试集准确率为 `82.84%`，十个串口演示原型为 `10/10`。第一层利用二值输入省略乘法，第二层执行80次 `FMUL32`；FPGA只运行推理，不进行训练。
 
 开机或复位后，CPU 先执行自检，再进入串口 shell。全部通过时应输出：
 
 ```text
 SELFTEST PASS
-RV32 shell 50M BRAM5 R14
+RV32 shell 50M BRAM5 R16
 cpu>
 ```
 
 shell 命令：
 
 ```text
-h ver s m0-m9 irq sdram p ledX cnn pong paint q
+h ver s m0-m9 irq sdram p ledX cnn calc pong paint q
 ```
 
-自检通过时四个 LED 全亮。当前 R14 的十个结果保存在不会被 CNN 或游戏覆盖的固定区域；板端应逐项读取确认，不能只依据 LED 判断：
+自检通过时四个LED全亮。R15真板已经逐项确认十个结果；R16继续把它们保存在不会被CNN、计算器或游戏覆盖的固定区域：
 
 ```text
 m0 = 0x000000ff  RV32I 算术/逻辑/移位
@@ -565,4 +568,4 @@ CPU 每帧输出定长二进制包 `A5 44 83 <x_lo> <x_hi> <y> <128 cells>`，Py
 
 可以概括为：
 
-> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含同步片上 BRAM、MMIO UART/LED/KEY、五级执行流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、多周期 RV32M、custom float32、最小 CSR 和自定义指令的小型可运行计算机系统。R14 RTL 已在单一 50 MHz 配置下通过完整功能回归；新的 ISE PPA、门级时序仿真和真板组合自检仍待完成。
+> 本设计完成了 RISC-V CPU 的基础实现，并在此基础上扩展为包含同步片上 BRAM、MMIO UART/LED/KEY、五级执行流水线、2 路组相联 I-Cache、load-use 冒险处理、动态分支预测、多周期 RV32M、custom float32、最小 CSR、自定义指令、浮点MLP和表达式计算器的小型可运行计算机系统。R15已在50 MHz真板通过组合自检；R16通过17项RTL回归，新的ISE PPA与真板复测待完成。

@@ -139,11 +139,11 @@ module top #(
     //----------------------------------------------
     // Synchronous instruction ROM behind the selected I-Cache.
     //----------------------------------------------
-    reg [31:0] instr_mem [0:2047];
+    reg [31:0] instr_mem [0:4095];
     reg [31:0] instr_rom_data_reg;
     assign instr_rom_data = instr_rom_data_reg;
     always @(posedge sys_clk)
-        instr_rom_data_reg <= instr_mem[instr_rom_addr[12:2]];
+        instr_rom_data_reg <= instr_mem[instr_rom_addr[13:2]];
 
     generate
         if (USE_2WAY_ICACHE) begin : gen_icache_2way
@@ -425,7 +425,7 @@ module top #(
 //----------------------------------------------
     integer j;
     initial begin
-        for (j = 0; j < 2048; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
+        for (j = 0; j < 4096; j = j + 1) instr_mem[j] = 32'h00000013; // NOP
         for (j = 0; j < 1024; j = j + 1) begin
             data_mem_b0[j] = 8'h0;
             data_mem_b1[j] = 8'h0;

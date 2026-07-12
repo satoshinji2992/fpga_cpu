@@ -146,6 +146,10 @@ module tb_cnn;
         if (cap_valid && log_len < LOG_SIZE) begin
             log[log_len] = cap_data;
             log_len = log_len + 1;
+            if (log_len >= 6 && log[log_len-6] == "p" && log[log_len-5] == "r" &&
+                log[log_len-4] == "e" && log[log_len-3] == "d" &&
+                log[log_len-2] == " " && cap_data >= "0" && cap_data <= "9")
+                $display("UART prediction %c", cap_data);
         end
     end
 
@@ -165,7 +169,7 @@ module tb_cnn;
 
     task test_digit;
         input integer digit;
-        integer first, cycles;
+        integer first, cycles, hidden_index;
         begin
             first = log_len;
             send_image(digit);

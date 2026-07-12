@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Train weights for the board's existing custom-float32 64->10 classifier.
+"""Train and export the board's custom-float32 64->8->10 MLP.
 
-The FPGA hardware and assembly are intentionally unchanged. Training uses
-non-negative, coarse-mantissa float32 weights and zero biases so inference only
-adds same-sign values. This avoids the custom FADD32 subtraction-normalization
-path, which is too long at 50 MHz on Spartan-6. Exported weights are verified
-with a bit-accurate model of the board's FADD32/FMUL32/FGT32 instructions.
+The input is binary, so the first layer adds weights only for set pixels. The
+second layer uses the CPU's FADD32/FMUL32/FGT32 instructions. Exported weights
+are verified with a bit-accurate model of those instructions before use.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from torchvision.datasets import MNIST
 
 ROOT = Path(__file__).resolve().parents[1]
 KEEP_FRACTION_BITS = 12
+HIDDEN_SIZE = 8
 
 DEMO_DIGIT_ROWS = {
     0: ["..####..", "..#..#..", "..#..#..", "..#..#..", "..#..#..", "..#..#..", "..####..", "........"],
@@ -130,14 +129,22 @@ def demo_prototypes() -> list[str]:
     return [rows_to_bits(DEMO_DIGIT_ROWS[d]) for d in range(10)]
 
 
-def predict_hardware(weights: np.ndarray, bias: np.ndarray, image_bits: str) -> int:
-    one = float_word(1.0)
+def predict_hardware(w1: np.ndarray, b1: np.ndarray, w2: np.ndarray,
+                     b2: np.ndarray, image_bits: str) -> int:
+    hidden = []
+    zero = float_word(0.0)
+    for unit in range(HIDDEN_SIZE):
+        value = float_word(b1[unit])
+        for pixel, weight in zip(image_bits, w1[unit]):
+            if pixel == "1":
+                value = hw_fadd32(value, float_word(weight))
+        hidden.append(value if hw_fgt32(value, zero) else zero)
+
     scores = []
     for digit in range(10):
-        score = float_word(bias[digit])
-        for pixel, weight in zip(image_bits, weights[digit]):
-            if pixel == "1":
-                score = hw_fadd32(score, hw_fmul32(float_word(weight), one))
+        score = float_word(b2[digit])
+        for activation, weight in zip(hidden, w2[digit]):
+            score = hw_fadd32(score, hw_fmul32(activation, float_word(weight)))
         scores.append(score)
     best = 0
     for digit in range(1, 10):
@@ -172,23 +179,25 @@ def augment_demos(images: np.ndarray, labels: np.ndarray, repeats: int):
     return np.concatenate((images, extra_images)), np.concatenate((labels, extra_labels))
 
 
-class CustomFloatLinear(torch.nn.Module):
+class CustomFloatMLP(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.weight = torch.nn.Parameter(torch.rand(10, 64) * 0.1)
-        self.bias = torch.nn.Parameter(torch.zeros(10))
+        self.fc1 = torch.nn.Linear(64, HIDDEN_SIZE)
+        self.fc2 = torch.nn.Linear(HIDDEN_SIZE, 10)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        weight = fake_quantize_mantissa(self.weight)
-        bias = fake_quantize_mantissa(self.bias)
-        return F.linear(x, weight, bias)
+        w1 = fake_quantize_mantissa(self.fc1.weight)
+        b1 = fake_quantize_mantissa(self.fc1.bias)
+        w2 = fake_quantize_mantissa(self.fc2.weight)
+        b2 = fake_quantize_mantissa(self.fc2.bias)
+        return F.linear(F.relu(F.linear(x, w1, b1)), w2, b2)
 
 
 def train_model(x_train, y_train, x_test, y_test, epochs: int, lr: float, seed: int):
     torch.manual_seed(seed)
     x, y = torch.from_numpy(x_train), torch.from_numpy(y_train)
     xt, yt = torch.from_numpy(x_test), torch.from_numpy(y_test)
-    model = CustomFloatLinear()
+    model = CustomFloatMLP()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-5)
     loss_fn = torch.nn.CrossEntropyLoss()
     batch_size = 512
@@ -203,42 +212,38 @@ def train_model(x_train, y_train, x_test, y_test, epochs: int, lr: float, seed: 
             loss = loss_fn(model(x[indices]), y[indices])
             loss.backward()
             optimizer.step()
-            with torch.no_grad():
-                model.weight.clamp_(min=0.0, max=8.0)
         with torch.no_grad():
             accuracy = (model(xt).argmax(1) == yt).float().mean().item()
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
-                best_weight = model.weight.cpu().numpy().copy()
-                best_bias = model.bias.cpu().numpy().copy()
+                best_state = {name: value.detach().cpu().clone()
+                              for name, value in model.state_dict().items()}
         print(f"epoch {epoch + 1:02d}: test_acc={accuracy * 100:.2f}%")
 
-    model.weight.data.copy_(torch.from_numpy(best_weight))
-    model.bias.data.copy_(torch.from_numpy(best_bias))
+    model.load_state_dict(best_state)
     with torch.no_grad():
         train_accuracy = (model(x).argmax(1) == y).float().mean().item()
         test_accuracy = (model(xt).argmax(1) == yt).float().mean().item()
-        weights = quantize_mantissa(model.weight.cpu().numpy())
-        bias = model.bias.cpu().numpy().copy()
-        # A common bias shift preserves argmax while making every starting
-        # score non-negative, so all board accumulations remain same-sign.
-        bias += max(0.0, float(-bias.min()))
-        bias = quantize_mantissa(bias)
-    return weights, bias, train_accuracy, test_accuracy
+        w1 = quantize_mantissa(model.fc1.weight.cpu().numpy())
+        b1 = quantize_mantissa(model.fc1.bias.cpu().numpy())
+        w2 = quantize_mantissa(model.fc2.weight.cpu().numpy())
+        b2 = quantize_mantissa(model.fc2.bias.cpu().numpy())
+    return w1, b1, w2, b2, train_accuracy, test_accuracy
 
 
-def evaluate_hardware(weights, bias, images, labels) -> float:
+def evaluate_hardware(w1, b1, w2, b2, images, labels) -> float:
     correct = 0
     for image, label in zip(images, labels):
         bits = "".join("1" if pixel else "0" for pixel in image)
-        correct += predict_hardware(weights, bias, bits) == int(label)
+        correct += predict_hardware(w1, b1, w2, b2, bits) == int(label)
     return correct / len(labels)
 
 
-def export_vh(path: Path, weights: np.ndarray, bias: np.ndarray, base_word: int = 64):
+def export_vh(path: Path, w1: np.ndarray, b1: np.ndarray,
+              w2: np.ndarray, b2: np.ndarray, base_word: int = 64):
     lines = [
         "// generated by scripts/train_mnist8.py -- do not edit",
-        "// custom-float32-aware linear model: weights[10][64], bias[10], one",
+        "// custom-float32 MLP: 64 inputs -> 8 ReLU units -> 10 outputs",
     ]
 
     def emit_word(word_index: int, value: int, comment: str):
@@ -251,33 +256,38 @@ def export_vh(path: Path, weights: np.ndarray, bias: np.ndarray, base_word: int 
         )
 
     index = base_word
-    for digit in range(10):
+    for unit in range(HIDDEN_SIZE):
         for pixel in range(64):
-            emit_word(index, float_word(weights[digit, pixel]), f"w[{digit}][{pixel}]")
+            emit_word(index, float_word(w1[unit, pixel]), f"w1[{unit}][{pixel}]")
+            index += 1
+    for unit in range(HIDDEN_SIZE):
+        emit_word(index, float_word(b1[unit]), f"b1[{unit}]")
+        index += 1
+    for digit in range(10):
+        for unit in range(HIDDEN_SIZE):
+            emit_word(index, float_word(w2[digit, unit]), f"w2[{digit}][{unit}]")
             index += 1
     for digit in range(10):
-        emit_word(index, float_word(bias[digit]), f"bias[{digit}]")
+        emit_word(index, float_word(b2[digit]), f"b2[{digit}]")
         index += 1
-    emit_word(index, float_word(1.0), "one")
     path.write_text("\n".join(lines) + "\n")
 
 
-def export_json(path: Path, weights, bias, train_accuracy, test_accuracy,
+def export_json(path: Path, w1, b1, w2, b2, train_accuracy, test_accuracy,
                 hardware_accuracy, predictions):
     data = {
-        "format": "mnist8-linear-custom-float32-positive",
+        "format": "mnist8-mlp-64x8x10-custom-float32",
         "train_accuracy": train_accuracy,
         "test_accuracy": test_accuracy,
         "hardware_exact_test_accuracy": hardware_accuracy,
         "kept_fraction_bits": KEEP_FRACTION_BITS,
-        "non_negative_weights": True,
-        "zero_bias": True,
-        "weights_shape": [10, 64],
-        "bias_shape": [10],
+        "hidden_size": HIDDEN_SIZE,
         "prototypes": demo_prototypes(),
         "prototype_predictions_hardware": predictions,
-        "weights": weights.astype(float).tolist(),
-        "bias": bias.astype(float).tolist(),
+        "w1": w1.astype(float).tolist(),
+        "b1": b1.astype(float).tolist(),
+        "w2": w2.astype(float).tolist(),
+        "b2": b2.astype(float).tolist(),
     }
     path.write_text(json.dumps(data, indent=2) + "\n")
 
@@ -300,13 +310,13 @@ def main() -> int:
     train_limit = None if args.limit_train == 0 else args.limit_train
     x_train, y_train, x_test, y_test = load_mnist8(data_dir, train_limit)
     x_train, y_train = augment_demos(x_train, y_train, args.demo_repeats)
-    weights, bias, train_accuracy, test_accuracy = train_model(
+    w1, b1, w2, b2, train_accuracy, test_accuracy = train_model(
         x_train, y_train, x_test, y_test, args.epochs, args.lr, args.seed
     )
-    predictions = [predict_hardware(weights, bias, bits) for bits in demo_prototypes()]
-    hardware_accuracy = evaluate_hardware(weights, bias, x_test, y_test)
-    export_vh(Path(args.vh), weights, bias)
-    export_json(Path(args.json), weights, bias, train_accuracy, test_accuracy,
+    predictions = [predict_hardware(w1, b1, w2, b2, bits) for bits in demo_prototypes()]
+    hardware_accuracy = evaluate_hardware(w1, b1, w2, b2, x_test, y_test)
+    export_vh(Path(args.vh), w1, b1, w2, b2)
+    export_json(Path(args.json), w1, b1, w2, b2, train_accuracy, test_accuracy,
                 hardware_accuracy, predictions)
     print(f"hardware prototype predictions={predictions}")
     print(f"train_acc={train_accuracy * 100:.2f}% test_acc={test_accuracy * 100:.2f}%")

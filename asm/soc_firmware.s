@@ -1,7 +1,7 @@
 # asm/soc_firmware.s - complete board firmware for the RV32 SoC.
 #
 # The model is trained offline by scripts/train_mnist8.py:
-#   score[k] = bias[k] + sum(pixel[i] * weight[k][i])
+#   hidden = relu(b1 + W1 * pixels); score = b2 + W2 * hidden
 #
 # Pixels are 8x8 binary ASCII values sent over UART. Weights and bias live in
 # data RAM via src/cnn_weights.vh. The CPU performs inference with custom
@@ -17,9 +17,14 @@
 .equ SDRAM_BASE,   0x10000000
 
 .equ IMG,     0x000
-.equ WEIGHT,  0x100     # 10 * 64 float32 words
-.equ BIAS,    0xB00     # 10 float32 words
-.equ FONE,    0xB28     # float32 1.0
+.equ CALC_PTR, 0x0AC
+.equ CALC_ERR, 0x0B0
+.equ HIDDEN,  0x0B8     # 8 float32 activations
+.equ W1,      0x100     # 8 * 64 float32 words
+.equ B1,      0x900     # 8 float32 words
+.equ W2,      0x920     # 10 * 8 float32 words
+.equ B2,      0xA60     # 10 float32 words
+.equ CALC_BUF, 0xA90    # 96-byte expression buffer
 
 .equ PONG_BX,    0x040
 .equ PONG_BY,    0x044
@@ -56,7 +61,7 @@ start:
     sw   t0, 0(t1)
     li   t0, 8
     csrw mstatus, t0
-    .puts "\nRV32 shell 50M BRAM5 R15\n"
+    .puts "\nRV32 shell 50M BRAM5 R16\n"
     j    shell_loop
 
 irq_handler:
@@ -140,16 +145,18 @@ shell_loop:
     li   t0, 'c'
     beq  a0, t0, cnn_cmd
     li   t0, 'q'
-    beq  a0, t0, idle
+    beq  a0, t0, shell_idle_dispatch
     .puts "?\n"
     j    shell_loop
+shell_idle_dispatch:
+    j    idle
 
 shell_help:
-    .puts "h ver s m0-m9 irq sdram p ledX cnn pong paint q\n"
+    .puts "h ver s m0-m9 irq sdram p ledX cnn calc pong paint q\n"
     j    shell_loop
 
 version_cmd:
-    .puts "build 50M ALL-SELFTEST SYNC-BRAM50 IRQ-PONG R15\n"
+    .puts "build 50M ALL-SELFTEST SYNC-BRAM50 IRQ-PONG R16\n"
     j    shell_loop
 
 s_cmd:
@@ -252,14 +259,14 @@ p_cmd:
     li   t0, 'n'
     bne  a2, t0, p_bad
     li   t0, 'g'
-    beq  a3, t0, pong_start
+    beq  a3, t0, pong_dispatch
 p_not_pong:
     li   t0, 'a'
     bne  a1, t0, p_not_paint
     li   t0, 'i'
     bne  a2, t0, p_bad
     li   t0, 'n'
-    beq  a3, t0, paint_start
+    beq  a3, t0, paint_dispatch
 p_not_paint:
     bnez a1, p_bad
     jal  ra, print_perf
@@ -267,6 +274,10 @@ p_not_paint:
 p_bad:
     .puts "use p, pong or paint\n"
     j    shell_loop
+pong_dispatch:
+    j    pong_start
+paint_dispatch:
+    j    paint_start
 
 led_cmd:
     mv   t0, a4
@@ -293,6 +304,16 @@ led_bad:
 cnn_cmd:
     li   t0, 'n'
     beq  a1, t0, cnn_start
+    li   t0, 'a'
+    beq  a1, t0, calc_cmd_check
+    .puts "?\n"
+    j    shell_loop
+calc_cmd_check:
+    li   t0, 'l'
+    bne  a2, t0, calc_cmd_bad
+    li   t0, 'c'
+    beq  a3, t0, calc_start
+calc_cmd_bad:
     .puts "?\n"
     j    shell_loop
 
@@ -721,9 +742,11 @@ cnn_start:
 cnn_loop:
     .puts "pixels64\n"
     jal  ra, recv_image
-    bnez a0, shell_loop
+    bnez a0, cnn_exit
     jal  ra, infer_digit
     j    cnn_loop
+cnn_exit:
+    j    shell_loop
 
 # =============================================================== recv_image() -> a0 (1=q, 0=image)
 recv_image:
@@ -771,7 +794,7 @@ ri_return:
 
 # =============================================================== infer_digit()
 infer_digit:
-    addi sp, sp, -36
+    addi sp, sp, -40
     sw   ra, 0(sp)
     sw   s0, 4(sp)     # class index
     sw   s1, 8(sp)     # best digit
@@ -780,31 +803,60 @@ infer_digit:
     sw   s4, 20(sp)    # weight pointer
     sw   s5, 24(sp)    # bias pointer
     sw   s6, 28(sp)    # pixel index
-    sw   s7, 32(sp)    # float one
+    sw   s7, 32(sp)    # hidden pointer/index
+    sw   s8, 36(sp)    # second-layer weight pointer
 
+    # First layer. Binary inputs turn pixel*weight into a conditional add.
     li   s0, 0
-    li   s1, 0
-    li   s2, 0
-    li   s4, 0x100
-    li   s5, 0xB00
-    li   t0, 0xB28
-    lw   s7, 0(t0)
-
-class_loop:
-    lw   s3, 0(s5)         # score = bias[class]
+    li   s4, W1
+    li   s5, B1
+    li   s7, HIDDEN
+hidden_loop:
+    lw   s3, 0(s5)
     li   s6, 0
-
-pixel_loop:
+hidden_pixel_loop:
     lb   t0, IMG(s6)
-    beqz t0, pixel_skip
-    lw   t1, 0(s4)         # weight[class][pixel]
-    fmul32 t2, t1, s7      # pixel is 1.0 for set bits
-    fadd32 s3, s3, t2
-pixel_skip:
+    beqz t0, hidden_pixel_skip
+    lw   t1, 0(s4)
+    fadd32 s3, s3, t1
+hidden_pixel_skip:
     addi s4, s4, 4
     addi s6, s6, 1
     li   t3, 64
-    blt  s6, t3, pixel_loop
+    blt  s6, t3, hidden_pixel_loop
+    fgt32 t0, s3, x0
+    bnez t0, hidden_store
+    li   s3, 0
+hidden_store:
+    sw   s3, 0(s7)
+    addi s7, s7, 4
+    addi s5, s5, 4
+    addi s0, s0, 1
+    li   t0, 8
+    blt  s0, t0, hidden_loop
+
+    # Second layer and signed-float argmax.
+    li   s0, 0
+    li   s1, 0
+    li   s2, 0
+    li   s5, B2
+    li   s8, W2
+class_loop:
+    lw   s3, 0(s5)
+    li   s6, 0
+    li   s7, HIDDEN
+class_hidden_loop:
+    lw   t0, 0(s7)
+    nop
+    lw   t1, 0(s8)
+    nop
+    fmul32 t2, t0, t1
+    fadd32 s3, s3, t2
+    addi s7, s7, 4
+    addi s8, s8, 4
+    addi s6, s6, 1
+    li   t3, 8
+    blt  s6, t3, class_hidden_loop
 
     beqz s0, best_update
     fgt32 t0, s3, s2
@@ -835,7 +887,460 @@ class_next:
     lw   s5, 24(sp)
     lw   s6, 28(sp)
     lw   s7, 32(sp)
-    addi sp, sp, 36
+    lw   s8, 36(sp)
+    addi sp, sp, 40
+    ret
+
+# =============================================================== float calculator
+# Recursive descent grammar: expr -> term {(+|-) term}; term -> factor {(*|/) factor}
+# factor -> number | -factor | (expr). Numeric literals are decimal float32.
+calc_start:
+    .puts "float calc: () +-*/, q exits\n"
+calc_loop:
+    .puts "calc> "
+    jal  ra, calc_read_line
+    bnez a0, calc_exit
+    li   t0, CALC_BUF
+    sw   t0, CALC_PTR(x0)
+    sw   x0, CALC_ERR(x0)
+    jal  ra, calc_parse_expr
+    mv   s0, a0
+    jal  ra, calc_skip_spaces
+    lw   t0, CALC_PTR(x0)
+    lbu  t1, 0(t0)
+    beqz t1, calc_check_error
+    li   t1, 1
+    sw   t1, CALC_ERR(x0)
+calc_check_error:
+    lw   t0, CALC_ERR(x0)
+    bnez t0, calc_bad
+    .puts "= "
+    mv   a0, s0
+    jal  ra, print_float3
+    .puts " (0x"
+    mv   a0, s0
+    jal  ra, print_hex32
+    .puts ")\n"
+    j    calc_loop
+calc_bad:
+    .puts "error\n"
+    j    calc_loop
+calc_exit:
+    j    shell_loop
+
+# Read at most 95 expression bytes. A line beginning with q exits.
+calc_read_line:
+    addi sp, sp, -12
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    sw   s1, 8(sp)
+    li   s0, CALC_BUF
+    li   s1, 0
+calc_read_loop:
+    jal  ra, read_key
+    li   t0, 13
+    beq  a0, t0, calc_read_done
+    li   t0, 10
+    beq  a0, t0, calc_read_done
+    li   t0, 95
+    bge  s1, t0, calc_read_loop
+    sb   a0, 0(s0)
+    addi s0, s0, 1
+    addi s1, s1, 1
+    j    calc_read_loop
+calc_read_done:
+    sb   x0, 0(s0)
+    li   a0, 0
+    li   t0, 1
+    bne  s1, t0, calc_read_return
+    li   t2, CALC_BUF
+    lbu  t1, 0(t2)
+    li   t0, 'q'
+    bne  t1, t0, calc_read_return
+    li   a0, 1
+calc_read_return:
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    addi sp, sp, 12
+    ret
+
+calc_skip_spaces:
+    lw   t0, CALC_PTR(x0)
+calc_space_loop:
+    lbu  t1, 0(t0)
+    li   t2, ' '
+    beq  t1, t2, calc_space_advance
+    li   t2, 9
+    bne  t1, t2, calc_space_done
+calc_space_advance:
+    addi t0, t0, 1
+    j    calc_space_loop
+calc_space_done:
+    sw   t0, CALC_PTR(x0)
+    ret
+
+calc_parse_expr:
+    addi sp, sp, -12
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    sw   s1, 8(sp)
+    jal  ra, calc_parse_term
+    mv   s0, a0
+calc_expr_loop:
+    jal  ra, calc_skip_spaces
+    lw   t0, CALC_PTR(x0)
+    lbu  s1, 0(t0)
+    li   t1, '+'
+    beq  s1, t1, calc_expr_op
+    li   t1, '-'
+    bne  s1, t1, calc_expr_done
+calc_expr_op:
+    addi t0, t0, 1
+    sw   t0, CALC_PTR(x0)
+    jal  ra, calc_parse_term
+    li   t0, '-'
+    bne  s1, t0, calc_expr_add
+    li   t0, 0x80000000
+    xor  a0, a0, t0
+calc_expr_add:
+    fadd32 s0, s0, a0
+    j    calc_expr_loop
+calc_expr_done:
+    mv   a0, s0
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    addi sp, sp, 12
+    ret
+
+calc_parse_term:
+    addi sp, sp, -12
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    sw   s1, 8(sp)
+    jal  ra, calc_parse_factor
+    mv   s0, a0
+calc_term_loop:
+    jal  ra, calc_skip_spaces
+    lw   t0, CALC_PTR(x0)
+    lbu  s1, 0(t0)
+    li   t1, '*'
+    beq  s1, t1, calc_term_op
+    li   t1, '/'
+    bne  s1, t1, calc_term_done
+calc_term_op:
+    addi t0, t0, 1
+    sw   t0, CALC_PTR(x0)
+    jal  ra, calc_parse_factor
+    li   t0, '*'
+    bne  s1, t0, calc_term_div
+    fmul32 s0, s0, a0
+    j    calc_term_loop
+calc_term_div:
+    mv   a1, a0
+    mv   a0, s0
+    jal  ra, soft_fdiv32
+    mv   s0, a0
+    j    calc_term_loop
+calc_term_done:
+    mv   a0, s0
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    addi sp, sp, 12
+    ret
+
+calc_parse_factor:
+    addi sp, sp, -8
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    jal  ra, calc_skip_spaces
+    lw   s0, CALC_PTR(x0)
+    lbu  t0, 0(s0)
+    li   t1, '-'
+    beq  t0, t1, calc_factor_neg
+    li   t1, '('
+    beq  t0, t1, calc_factor_paren
+    jal  ra, calc_parse_number
+    j    calc_factor_return
+calc_factor_neg:
+    addi s0, s0, 1
+    sw   s0, CALC_PTR(x0)
+    jal  ra, calc_parse_factor
+    li   t0, 0x80000000
+    xor  a0, a0, t0
+    j    calc_factor_return
+calc_factor_paren:
+    addi s0, s0, 1
+    sw   s0, CALC_PTR(x0)
+    jal  ra, calc_parse_expr
+    mv   s0, a0
+    jal  ra, calc_skip_spaces
+    lw   t0, CALC_PTR(x0)
+    lbu  t1, 0(t0)
+    li   t2, ')'
+    beq  t1, t2, calc_factor_close
+    li   t1, 1
+    sw   t1, CALC_ERR(x0)
+    j    calc_factor_paren_done
+calc_factor_close:
+    addi t0, t0, 1
+    sw   t0, CALC_PTR(x0)
+calc_factor_paren_done:
+    mv   a0, s0
+calc_factor_return:
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    addi sp, sp, 8
+    ret
+
+# Parse unsigned decimal into float32. Up to seven significant digits is safe.
+calc_parse_number:
+    addi sp, sp, -24
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    sw   s1, 8(sp)
+    sw   s2, 12(sp)
+    sw   s3, 16(sp)
+    sw   s4, 20(sp)
+    lw   s0, CALC_PTR(x0)
+    li   s1, 0
+    li   s2, 1
+    li   s3, 0
+    li   s4, 0
+calc_number_loop:
+    lbu  t0, 0(s0)
+    li   t1, '.'
+    beq  t0, t1, calc_number_dot
+    li   t1, '0'
+    blt  t0, t1, calc_number_done
+    li   t2, '9'
+    blt  t2, t0, calc_number_done
+    li   t3, 10
+    mul  s1, s1, t3
+    addi t0, t0, -48
+    add  s1, s1, t0
+    beqz s3, calc_number_digit_done
+    mul  s2, s2, t3
+calc_number_digit_done:
+    li   s4, 1
+    addi s0, s0, 1
+    j    calc_number_loop
+calc_number_dot:
+    bnez s3, calc_number_done
+    li   s3, 1
+    addi s0, s0, 1
+    j    calc_number_loop
+calc_number_done:
+    sw   s0, CALC_PTR(x0)
+    bnez s4, calc_number_convert
+    li   t0, 1
+    sw   t0, CALC_ERR(x0)
+    li   a0, 0
+    j    calc_number_return
+calc_number_convert:
+    mv   a0, s1
+    jal  ra, uint_to_float32
+    mv   s4, a0
+    li   t0, 1
+    beq  s2, t0, calc_number_no_scale
+    mv   a0, s2
+    jal  ra, uint_to_float32
+    mv   a1, a0
+    mv   a0, s4
+    jal  ra, soft_fdiv32
+    mv   s4, a0
+calc_number_no_scale:
+    mv   a0, s4
+calc_number_return:
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    lw   s2, 12(sp)
+    lw   s3, 16(sp)
+    lw   s4, 20(sp)
+    addi sp, sp, 24
+    ret
+
+uint_to_float32:
+    beqz a0, uint_float_zero
+    mv   t0, a0
+    li   t1, 0
+uint_float_msb:
+    srli t2, t0, 1
+    beqz t2, uint_float_pack
+    mv   t0, t2
+    addi t1, t1, 1
+    j    uint_float_msb
+uint_float_pack:
+    li   t2, 23
+    blt  t2, t1, uint_float_right
+    sub  t3, t2, t1
+    sll  t0, a0, t3
+    j    uint_float_exp
+uint_float_right:
+    sub  t3, t1, t2
+    srl  t0, a0, t3
+uint_float_exp:
+    addi t1, t1, 127
+    slli t1, t1, 23
+    li   t2, 0x007FFFFF
+    and  t0, t0, t2
+    or   a0, t1, t0
+uint_float_zero:
+    ret
+
+# a0/a1 float32 division. Produces a normalized 24-bit quotient by long divide.
+soft_fdiv32:
+    beqz a1, soft_fdiv_zero
+    beqz a0, soft_fdiv_return
+    xor  t0, a0, a1
+    li   t1, 0x80000000
+    and  t0, t0, t1
+    srli t1, a0, 23
+    andi t1, t1, 255
+    srli t2, a1, 23
+    andi t2, t2, 255
+    sub  t1, t1, t2
+    addi t1, t1, 127
+    li   t2, 0x007FFFFF
+    and  t3, a0, t2
+    and  t4, a1, t2
+    li   t5, 0x00800000
+    or   t3, t3, t5
+    or   t4, t4, t5
+    bgeu t3, t4, soft_fdiv_ready
+    slli t3, t3, 1
+    addi t1, t1, -1
+soft_fdiv_ready:
+    sub  t3, t3, t4
+    mv   t6, t5
+    li   a2, 22
+soft_fdiv_loop:
+    slli t3, t3, 1
+    bltu t3, t4, soft_fdiv_next
+    sub  t3, t3, t4
+    li   a3, 1
+    sll  a3, a3, a2
+    or   t6, t6, a3
+soft_fdiv_next:
+    addi a2, a2, -1
+    bgez a2, soft_fdiv_loop
+    and  t6, t6, t2
+    slli t1, t1, 23
+    or   a0, t0, t1
+    or   a0, a0, t6
+soft_fdiv_return:
+    ret
+soft_fdiv_zero:
+    li   t0, 1
+    sw   t0, CALC_ERR(x0)
+    li   a0, 0
+    ret
+
+print_uint:
+    addi sp, sp, -8
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    mv   s0, a0
+    li   t0, 10
+    bltu s0, t0, print_uint_digit
+    divu a0, s0, t0
+    jal  ra, print_uint
+print_uint_digit:
+    li   t0, 10
+    remu a0, s0, t0
+    addi a0, a0, 48
+    jal  ra, putc
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    addi sp, sp, 8
+    ret
+
+# Print a practical calculator range as signed decimal with three digits.
+print_float3:
+    addi sp, sp, -28
+    sw   ra, 0(sp)
+    sw   s0, 4(sp)
+    sw   s1, 8(sp)
+    sw   s2, 12(sp)
+    sw   s3, 16(sp)
+    sw   s4, 20(sp)
+    sw   s5, 24(sp)
+    mv   s0, a0
+    bgez s0, print_float_abs
+    li   a0, '-'
+    jal  ra, putc
+    li   t0, 0x7FFFFFFF
+    and  s0, s0, t0
+print_float_abs:
+    beqz s0, print_float_zero
+    srli s1, s0, 23
+    andi s1, s1, 255
+    addi s1, s1, -127
+    li   t0, 0x007FFFFF
+    and  s2, s0, t0
+    li   t0, 0x00800000
+    or   s2, s2, t0
+    li   t0, 23
+    blt  t0, s1, print_float_large
+    bltz s1, print_float_less_one
+    sub  s3, t0, s1
+    srl  a0, s2, s3
+    jal  ra, print_uint
+    li   t1, 1
+    sll  t1, t1, s3
+    addi t1, t1, -1
+    and  s4, s2, t1
+    mv   s5, s3
+    j    print_float_fraction
+print_float_less_one:
+    li   a0, '0'
+    jal  ra, putc
+    li   t0, 23
+    sub  s5, t0, s1
+    li   t0, 31
+    blt  t0, s5, print_float_tiny
+    mv   s4, s2
+    j    print_float_fraction
+print_float_large:
+    addi t1, s1, -23
+    sll  a0, s2, t1
+    jal  ra, print_uint
+    li   s4, 0
+    li   s5, 1
+print_float_fraction:
+    li   a0, '.'
+    jal  ra, putc
+    li   s3, 3
+print_float_frac_loop:
+    li   t0, 10
+    mul  s4, s4, t0
+    srl  a0, s4, s5
+    addi a0, a0, 48
+    jal  ra, putc
+    li   t0, 1
+    sll  t0, t0, s5
+    addi t0, t0, -1
+    and  s4, s4, t0
+    addi s3, s3, -1
+    bnez s3, print_float_frac_loop
+    j    print_float_return
+print_float_zero:
+    .puts "0.000"
+    j    print_float_return
+print_float_tiny:
+    .puts ".000"
+print_float_return:
+    lw   ra, 0(sp)
+    lw   s0, 4(sp)
+    lw   s1, 8(sp)
+    lw   s2, 12(sp)
+    lw   s3, 16(sp)
+    lw   s4, 20(sp)
+    lw   s5, 24(sp)
+    addi sp, sp, 28
     ret
 
 # =============================================================== CPU pong demo

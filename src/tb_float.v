@@ -58,19 +58,33 @@ module tb_float;
         instr_mem[9]  = 32'h00402023; // sw     x4, 0(x0)
         instr_mem[10] = 32'h00502223; // sw     x5, 4(x0)
         instr_mem[11] = 32'h00602423; // sw     x6, 8(x0)
-        instr_mem[12] = 32'h00100073; // ebreak
+        instr_mem[12] = 32'h00000013; // continue to signed cases
+
+        // Signed multiply/subtractive add used by the MLP output layer.
+        instr_mem[13] = 32'h4042b0b7;
+        instr_mem[14] = 32'hd1008093; // x1 = 0x4042ad10
+        instr_mem[15] = 32'hbeedd137;
+        instr_mem[16] = 32'h80010113; // x2 = 0xbeedc800
+        instr_mem[17] = 32'h0020c18b; // fmul32 x3,x1,x2 = 0xbfb4d24f
+        instr_mem[18] = 32'h0011b20b; // fadd32 x4,x3,x1 = 0x3fd087d2
+        instr_mem[19] = 32'h00302623;
+        instr_mem[20] = 32'h00402823;
+        instr_mem[21] = 32'h00100073;
     end
 
     initial begin
-        #800;
+        #5000;
         $display("");
         $display("=======================================");
         $display("FLOAT HALT=%0d", halt);
         $display("Mem[0] = %08h (expected 40700000, 1.5+2.25)", data_mem[0]);
         $display("Mem[1] = %08h (expected 40400000, 1.5*2.0)", data_mem[1]);
         $display("Mem[2] = %08h (expected 00000001, 2.25>1.5)", data_mem[2]);
+        $display("Mem[3] = %08h (expected bfb4d24f, signed multiply)", data_mem[3]);
+        $display("Mem[4] = %08h (expected 3fd087d2, opposite-sign add)", data_mem[4]);
         if (halt && (data_mem[0] == 32'h40700000) && (data_mem[1] == 32'h40400000) &&
-            (data_mem[2] == 32'h00000001))
+            (data_mem[2] == 32'h00000001) && (data_mem[3] == 32'hbfb4d24f) &&
+            (data_mem[4] == 32'h3fd087d2))
             $display("FLOAT PASS");
         else
             $display("FLOAT FAIL");

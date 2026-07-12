@@ -47,10 +47,10 @@ def retry_under_wsl():
 def run_tb(iv, vv, srcs, label):
     out = os.path.join(tempfile.gettempdir(), "fpgacpu_%s.out" % label)
     cp = subprocess.run([iv, "-I", SRC, "-o", out] + [os.path.join(SRC, s) for s in srcs],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, errors="replace")
     if cp.returncode != 0 or not os.path.exists(out):
         return "", "compile fail: " + (cp.stderr or cp.stdout)[-400:]
-    rp = subprocess.run([vv, out], capture_output=True, text=True)
+    rp = subprocess.run([vv, out], capture_output=True, text=True, errors="replace")
     return rp.stdout, None
 
 def grab(pattern, text, cast=str, default=None):
@@ -90,6 +90,8 @@ def main():
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn.v"]),
         ("cnn-ablation",  ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_cnn_ablation.v"]),
+        ("calculator",    ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
+                           "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_calculator.v"]),
         ("shell",         ["top.v", "sdram_controller.v", "sdram_device_model.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",
                            "icache_2way.v", "uart_rx.v", "uart_tx.v", "tb_shell.v"]),
         ("soc-io",        ["top.v", "sdram_controller.v", "riscv_pipeline_core.v", "icache_direct_mapped.v",

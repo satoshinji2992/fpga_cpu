@@ -133,6 +133,8 @@ def enc_b(opcode, funct3, rs1, rs2, imm):
     # imm is a byte offset; branch targets are 2-byte aligned, bit 0 unused.
     if imm & 1:
         raise AsmError("branch target not 2-aligned: %d" % imm)
+    if imm < -4096 or imm > 4094:
+        raise AsmError("branch target out of range: %d (expected -4096..4094)" % imm)
     imm = u(imm, 13)
     b12 = (imm >> 12) & 1
     b10_5 = (imm >> 5) & 0x3F
@@ -149,6 +151,8 @@ def enc_u(opcode, rd, imm):
 def enc_j(opcode, rd, imm):
     if imm & 1:
         raise AsmError("jump target not 2-aligned: %d" % imm)
+    if imm < -1048576 or imm > 1048574:
+        raise AsmError("jump target out of range: %d" % imm)
     imm = u(imm, 21)
     b20 = (imm >> 20) & 1
     b10_1 = (imm >> 1) & 0x3FF
